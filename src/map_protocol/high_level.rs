@@ -1,8 +1,9 @@
-use std::{fs::File, path::Path};
-
 use enum_primitive_derive::Primitive;
 use num_traits::FromPrimitive;
 use serde::Serialize;
+use serialport::SerialPort;
+
+use tracing::instrument;
 
 use super::{
     low_level::{LowLevelCommands, LowLevelProtocol},
@@ -20,6 +21,7 @@ use super::{
 
 #[derive(Default, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
+#[allow(non_snake_case)]
 pub struct MapInfo {
     _MODE: MapModeExtended,
     _Status_Char: u8,
@@ -65,10 +67,11 @@ pub struct MapInfo {
     MAPS_count: u8,
 }
 
-#[derive(PartialEq, PartialOrd, Debug, Serialize, Primitive)]
+#[derive(PartialEq, PartialOrd, Debug, Serialize, Primitive, Default)]
 #[repr(u8)]
 pub enum MapModeExtended {
     /// МАП выключен и нет сети на входе
+    #[default]
     PowerOff = 0,
     /// МАП выключен но есть сеть на входе (значение напряжения сети выводится в ЖКИ)
     PowerOffExternalPowerPresent = 1,
@@ -99,47 +102,46 @@ pub enum MapModeExtended {
     /// режим подкачка Pmax
     Pmax = 18,
 }
-impl Default for MapModeExtended {
-    fn default() -> Self {
-        MapModeExtended::PowerOff
-    }
-}
 
+#[derive(Debug)]
 pub struct HighLevelProtocol {
     low_level_protocol: LowLevelProtocol,
 }
 impl HighLevelProtocol {
-    pub fn new<P: AsRef<Path>>(path: P) -> Result<Self, MapError> {
-        let file = File::open(path).map_err(MapError::IOError)?;
+    pub fn new(port: Box<dyn SerialPort>) -> Result<Self, MapError> {
         Ok(Self {
-            low_level_protocol: LowLevelProtocol::new(file),
+            low_level_protocol: LowLevelProtocol::new(port),
         })
     }
-    pub fn read_eeprom(&mut self) -> Result<[u8; 512], MapError> {
-        let mut eeprom: [u8; 512] = [0; 512];
+    #[instrument(skip(self))]
+    pub fn read_eeprom(&mut self) -> Result<[u8; 560], MapError> {
+        let mut eeprom = [0u8; 560];
 
         self.read_eeprom_to_buffer(&mut eeprom)?;
         Ok(eeprom)
     }
-
-    pub fn read_eeprom_to_buffer(&mut self, eeprom: &mut [u8; 512]) -> Result<(), MapError> {
+    #[instrument(skip(eeprom, self))]
+    pub fn read_eeprom_to_buffer(&mut self, eeprom: &mut [u8; 560]) -> Result<(), MapError> {
         self.low_level_protocol
-            .send_command(LowLevelCommands::ToRead, 0, 0xFF)?;
+            .send_command_clean_buffer(LowLevelCommands::ToRead, 0, 0xFF)?;
         self.low_level_protocol.read_answer()?;
 
-        eeprom[0..256].clone_from_slice(self.low_level_protocol.get_actually_read_slice());
+        eeprom[0..self.low_level_protocol.last_read_bytes_index]
+            .clone_from_slice(self.low_level_protocol.get_actually_read_slice());
 
         self.low_level_protocol
-            .send_command(LowLevelCommands::ToRead, 0x100, 0xff)?;
+            .send_command_clean_buffer(LowLevelCommands::ToRead, 0x100, 0xff)?;
+        self.low_level_protocol.read_answer()?;
 
-        eeprom[256..=(256 + self.low_level_protocol.last_read_bytes_index)]
+        eeprom[0x100..(0x100 + self.low_level_protocol.last_read_bytes_index)]
             .clone_from_slice(self.low_level_protocol.get_actually_read_slice());
         Ok(())
     }
 
-    pub fn read_status(&mut self) -> Result<MapInfo, MapError> {
+    #[instrument(skip(self))]
+    pub fn read_status(&mut self, eeprom: &[u8; 560]) -> Result<MapInfo, MapError> {
         let mut map_info = MapInfo::default();
-        let eeprom = self.read_eeprom()?;
+        // let eeprom = self.read_eeprom()?;
         self.low_level_protocol
             .send_command_clean_buffer(LowLevelCommands::ToRead, 0x527, 0x5F)?;
 
@@ -226,10 +228,10 @@ impl HighLevelProtocol {
         map_info._PNET = self.low_level_protocol.buffer[0x424 - 0x3FF] as u32 * 100;
 
         map_info._TFNET = self.low_level_protocol.buffer[0x425 - 0x3FF];
-        // map_info._TFNET = 6250 / map_info._TFNET;
+        // закомментировано в оригинале map_info._TFNET = 6250 / map_info._TFNET;
 
         map_info._ThFMAP = self.low_level_protocol.buffer[0x426 - 0x3FF];
-        // map_info._ThFMAP = 6250 / map_info._ThFMAP;
+        // закомментировано в оригинале map_info._ThFMAP = 6250 / map_info._ThFMAP;
 
         map_info._UOUTmed = self.low_level_protocol.buffer[0x427 - 0x3FF] as u32;
         if map_info._UOUTmed > 0 {
@@ -237,7 +239,7 @@ impl HighLevelProtocol {
         }
 
         map_info._TFNET_Limit = self.low_level_protocol.buffer[0x428 - 0x3FF];
-        // if (map_info._TFNET_Limit!=0) map_info._TFNET_Limit= 2500 / map_info._TFNET_Limit;
+        // закомментировано в оригинале if (map_info._TFNET_Limit!=0) map_info._TFNET_Limit= 2500 / map_info._TFNET_Limit;
 
         map_info._UNET_Limit = self.low_level_protocol.buffer[0x429 - 0x3FF] as u32;
         map_info._UNET_Limit += 100;
@@ -292,14 +294,16 @@ impl HighLevelProtocol {
 
         Ok(map_info)
     }
+
+    #[instrument]
     fn real_mode(
         &self,
         mode: MapModeExtended,
         net_alg: u8,
         flag_eco: u8,
-        NetUpEco: u8,
-        NetUpLoad: u8,
-        UNET: i32,
+        net_up_eco: u8,
+        net_up_load: u8,
+        unet: i32,
         // Pmax_On: u8,
     ) -> MapModeExtended {
         if mode != MapModeExtended::PowerOnGeneratingNoExternalPower
@@ -308,13 +312,13 @@ impl HighLevelProtocol {
             return mode;
         }
 
-        if NetUpEco == 0 {
+        if net_up_eco == 0 {
             // ECO forced gen or Tarifs
             // if NetUpLoad == 1 && (Pmax_On & 2 > 0) && (UNET > 100) {
             //     return MapModeExtended::Pmax;
             // }
             if mode == MapModeExtended::PowerOnGeneratingNoExternalPower {
-                if UNET > 100 {
+                if unet > 100 {
                     if net_alg == 2 {
                         return MapModeExtended::ForcedGeneration;
                     } else if net_alg == 3 {
@@ -329,11 +333,16 @@ impl HighLevelProtocol {
             } else {
                 mode
             }
-        } else if NetUpEco == 1 {
+        } else if net_up_eco == 1 {
             // Eco pumping
 
             if mode == MapModeExtended::PowerOnTranslatingExternalPower {
                 if net_alg == 2 {
+                    // return match (flag_eco & 1).cmp(&0u8) {
+                    //     Ordering::Greater => MapModeExtended::WaitingForExternalCharge,
+                    //     Ordering::Equal => MapModeExtended::TranslationECOPumping,
+                    //     Ordering::Less => mode,
+                    // };
                     if flag_eco & 1 > 0 {
                         return MapModeExtended::WaitingForExternalCharge;
                     } else if flag_eco & 1 == 0 {
@@ -342,6 +351,11 @@ impl HighLevelProtocol {
                         return mode;
                     }
                 } else if net_alg == 3 {
+                    // return match (flag_eco & 2).cmp(&0u8) {
+                    //     Ordering::Greater => MapModeExtended::SellingBackToGridMinRate,
+                    //     Ordering::Equal => MapModeExtended::SellingBackToGridTranslationEcoPumping,
+                    //     Ordering::Less => mode,
+                    // };
                     if flag_eco & 2 > 0 {
                         return MapModeExtended::SellingBackToGridMinRate;
                     } else if flag_eco & 2 == 0 {
@@ -355,7 +369,7 @@ impl HighLevelProtocol {
             } else {
                 return mode;
             }
-        } else if NetUpEco == 2 {
+        } else if net_up_eco == 2 {
             // Sell to network
             if mode == MapModeExtended::PowerOnTranslatingExternalPower {
                 if net_alg == 2 {
