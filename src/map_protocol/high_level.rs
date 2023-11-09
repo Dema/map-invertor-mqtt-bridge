@@ -5,8 +5,6 @@ use num_traits::FromPrimitive;
 use serde::Serialize;
 use serialport::SerialPort;
 
-use tracing::instrument;
-
 use super::{
     low_level::{LowLevelCommands, LowLevelProtocol},
     MapError,
@@ -21,7 +19,7 @@ use super::{
 //     pub const BMS_LOW_T: u8 = 0;
 // }
 
-#[derive(Default, Debug, Serialize)]
+#[derive(Default, Debug, Serialize, PartialEq)]
 pub struct MapInfo {
     mode: MapModeExtended,
     status_char: u8,
@@ -113,14 +111,14 @@ impl HighLevelProtocol {
             low_level_protocol: LowLevelProtocol::new(port),
         })
     }
-    #[instrument(skip(self))]
+
     pub fn read_eeprom(&mut self) -> Result<[u8; 560], MapError> {
         let mut eeprom = [0u8; 560];
 
         self.read_eeprom_to_buffer(&mut eeprom)?;
         Ok(eeprom)
     }
-    #[instrument(skip(eeprom, self))]
+
     pub fn read_eeprom_to_buffer(&mut self, eeprom: &mut [u8; 560]) -> Result<(), MapError> {
         self.low_level_protocol
             .send_command_clean_buffer(LowLevelCommands::ToRead, 0, 0xFF)?;
@@ -138,7 +136,6 @@ impl HighLevelProtocol {
         Ok(())
     }
 
-    #[instrument(skip(self))]
     pub fn read_status(&mut self, eeprom: &[u8; 560]) -> Result<MapInfo, MapError> {
         let mut map_info = MapInfo::default();
         // let eeprom = self.read_eeprom()?;
@@ -150,8 +147,8 @@ impl HighLevelProtocol {
             Ok(_) => {
                 let buffer = self.low_level_protocol.buffer;
                 map_info.flag_eco = buffer[0x5F];
-                map_info.relay1 = buffer[0x60] & 1;
-                map_info.relay2 = buffer[0x60] & 2;
+                map_info.relay1 = buffer[0x60] & 0b01;
+                map_info.relay2 = buffer[0x60] & 0b10;
                 map_info.flag_u_net2 = buffer[1];
                 //------------3 phase currents calculation---------------------
                 map_info.i_ph1 = (buffer[2] as f32 + ((buffer[3] & 0x7F) as f32) * 256.0) / 10.0;
@@ -295,7 +292,6 @@ impl HighLevelProtocol {
         Ok(map_info)
     }
 
-    #[instrument]
     fn real_mode(
         &self,
         mode: MapModeExtended,

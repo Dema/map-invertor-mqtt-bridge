@@ -1,0 +1,27 @@
+# Use an official Rust image as base
+FROM rust:latest as builder
+
+ENV CROSS_CONTAINER_IN_CONTAINER=true
+
+# Install cross-compilation tool
+RUN cargo install cross
+
+# Set up the environment for ARMv7 architecture (Raspberry Pi 4 uses ARM Cortex-A72 which is compatible)
+ENV TARGET=aarch64-unknown-linux-musl
+
+# If you prefer musl (for static linking), uncomment the next line and comment out the previous ENV TARGET line
+# ENV TARGET=armv7-unknown-linux-musleabihf
+
+# Install dependencies for cross
+
+FROM builder as built
+
+ COPY . .
+# COPY Cargo.toml Cargo.lock ./
+RUN cross build --release
+# RUN mkdir src && echo "fn main() {}" > src/main.rs
+# RUN cargo build --release
+# RUN rm src/main.rs
+
+# COPY . .
+# RUN c

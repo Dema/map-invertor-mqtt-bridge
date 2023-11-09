@@ -1,38 +1,20 @@
-use std::{fmt::Debug, thread, time::Duration};
+use log::{self, info, trace, warn};
+use std::{
+    fmt::{format, Debug},
+    thread,
+    time::Duration,
+};
 
-use crate::map_protocol::MapError;
+use anyhow::bail;
 use clap::{Args, Command, FromArgMatches, Parser, Subcommand};
 use clap_complete::{generate, Generator, Shell};
 use clap_duration::duration_range_value_parse;
-
 use duration_human::{DurationHuman, DurationHumanValidator};
-use map_protocol::{high_level::HighLevelProtocol, NotFoundSnafu};
-use rumqttc::{Client, ClientError, MqttOptions};
+use map_protocol::high_level::{HighLevelProtocol, MapInfo};
 
-use snafu::{Backtrace, ErrorCompat, ResultExt, Snafu};
-use tracing::Level;
-use tracing_subscriber::FmtSubscriber;
+use paho_mqtt::{Message, QOS_1};
 
 mod map_protocol;
-
-#[derive(Debug, Snafu)]
-#[snafu(visibility(pub(crate)))]
-enum MainError {
-    Map {
-        #[snafu(backtrace)]
-        source: MapError,
-    },
-    #[snafu(display("SerialPort Error {source}"))]
-    SerialPort {
-        source: serialport::Error,
-        backtrace: Backtrace,
-    },
-    #[snafu(display("MQTT error"))]
-    Mqtt {
-        source: ClientError,
-        backtrace: Backtrace,
-    },
-}
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
@@ -56,9 +38,18 @@ enum WorkingMode {
         /// MQTT broker port
         #[arg(long, env)]
         mqtt_port: u16,
+        /// MQTT broker username
+        #[arg(long, env)]
+        mqtt_username: String,
+        /// MQTT broker password
+        #[arg(long, env)]
+        mqtt_password: String,
         /// MQTT broker topic
         #[arg(long, env)]
-        mqtt_topic: String,
+        mqtt_topic: Option<String>,
+        /// my id, default is "map-invertor-mqtt-bridge"
+        #[arg(long, env)]
+        mqtt_id: Option<String>,
         /// Polling interval
         #[arg(
         long, default_value="10s",
@@ -87,11 +78,8 @@ enum WorkingMode {
 fn print_completions<G: Generator>(gen: G, cmd: &mut Command) {
     generate(gen, cmd, cmd.get_name().to_string(), &mut std::io::stdout());
 }
-fn main() {
-    let subscriber = FmtSubscriber::builder()
-        .with_max_level(Level::INFO)
-        .finish();
-    tracing::subscriber::set_global_default(subscriber).expect("setting default subscriber failed");
+fn main() -> anyhow::Result<()> {
+    env_logger::init();
 
     let cli = Command::new("CLI");
     let cli = Cli::augment_args(cli);
@@ -105,24 +93,11 @@ fn main() {
         }
     };
 
-    match main_with_error(args) {
-        Ok(_) => {}
-        Err(error) => {
-            eprintln!("{}", &error);
-            if let Some(b) = ErrorCompat::backtrace(&error) {
-                eprintln!("{}", b);
-            }
-            std::process::exit(1);
-        }
-    };
-}
-
-fn main_with_error(args: Cli) -> Result<(), MainError> {
     match args.mode {
         WorkingMode::Completion { shell } => {
             let cli = Command::new("CLI");
             let mut cli = Cli::augment_args(cli);
-            print_completions(shell, &mut cli)
+            print_completions(shell, &mut cli);
         }
         WorkingMode::Stdout {
             map_port,
@@ -131,15 +106,14 @@ fn main_with_error(args: Cli) -> Result<(), MainError> {
         } => {
             let port = serialport::new(map_port, map_port_speed)
                 .timeout(Duration::from_secs(20))
-                .open()
-                .context(SerialPortSnafu {})?;
-            let mut protocol = HighLevelProtocol::new(port).context(MapSnafu {})?;
-            // protocol.temp_read_status();
-            let eeprom = protocol.read_eeprom().context(MapSnafu {})?;
+                .open()?;
+            let mut protocol = HighLevelProtocol::new(port)?;
+
+            let eeprom = protocol.read_eeprom()?;
             if eeprom[0] != 3 {
-                NotFoundSnafu {}.fail().context(MapSnafu {})?;
+                bail!("MAP not found");
             }
-            let map_info = protocol.read_status(&eeprom).context(MapSnafu {})?;
+            let map_info = protocol.read_status(&eeprom)?;
             if json_output {
                 print!(
                     "{}",
@@ -155,34 +129,73 @@ fn main_with_error(args: Cli) -> Result<(), MainError> {
             map_port_speed,
             mqtt_hostname,
             mqtt_port,
+            mqtt_username,
+            mqtt_password,
             mqtt_topic,
+            mqtt_id,
             interval,
         } => {
-            let port = serialport::new(map_port, map_port_speed)
+            let port = serialport::new(&map_port, map_port_speed)
                 .timeout(Duration::from_secs(20))
-                .open()
-                .context(SerialPortSnafu {})?;
-            let mut protocol = HighLevelProtocol::new(port).context(MapSnafu {})?;
-            let mut mqttoptions = MqttOptions::new("rumqtt-sync", mqtt_hostname, mqtt_port);
-            mqttoptions.set_keep_alive(Duration::from_secs(5));
+                .open()?;
+            info!("Map port {} opened", map_port);
+            let mut map_protocol = HighLevelProtocol::new(port)?;
+            let mqtt_id = mqtt_id.unwrap_or("map-invertor-mqtt-bridge".into());
 
-            let (mut client, _) = Client::new(mqttoptions, 10);
-            let eeprom = protocol.read_eeprom().context(MapSnafu {})?;
+            let url: String = format!("tcp://{mqtt_hostname}:{mqtt_port}");
+
+            let cli = paho_mqtt::Client::new((url.clone(), mqtt_id))?;
+            let conn_opts = paho_mqtt::ConnectOptionsBuilder::new()
+                .keep_alive_interval(Duration::from_secs(20))
+                .user_name(&mqtt_username)
+                .password(&mqtt_password)
+                .clean_session(true)
+                .finalize();
+
+            cli.connect(conn_opts)?;
+            info!("connected to MQTT broker at {}", url);
+            let eeprom = map_protocol.read_eeprom()?;
 
             if eeprom[0] != 3 {
-                NotFoundSnafu {}.fail().context(MapSnafu {})?;
+                bail!("MAP not found");
             }
-            loop {
-                let map_info = protocol.read_status(&eeprom).context(MapSnafu {})?;
+            let topic = &mqtt_topic.unwrap_or("map-invertor/1".into());
+            let mut count = 0;
+            let mut consecutive_same_reads = 0;
 
-                client
-                    .publish(
-                        &mqtt_topic,
-                        rumqttc::QoS::AtLeastOnce,
-                        false,
-                        serde_json::to_vec(&map_info).unwrap(),
-                    )
-                    .context(MqttSnafu {})?;
+            let max_consecutive_reads = 300 / Duration::from(&interval).as_secs();
+
+            let mut prev_map_info = MapInfo::default();
+            loop {
+                let map_info = map_protocol.read_status(&eeprom)?;
+                // let map_info = MapInfo::default();
+                if prev_map_info != map_info {
+                    let msg =
+                        Message::new_retained(topic, serde_json::to_vec(&map_info).unwrap(), QOS_1);
+                    cli.publish(msg)?;
+                    prev_map_info = map_info;
+                    consecutive_same_reads = 0;
+                } else {
+                    consecutive_same_reads += 1;
+                }
+                count = (count + 1) % 10;
+                trace!("map info: {:?}", &prev_map_info);
+                trace!("count: {}", count);
+                trace!("consecutive_same_reads: {}", consecutive_same_reads);
+                if consecutive_same_reads > max_consecutive_reads {
+                    warn!(
+                        "map info not changed for {} seconds and {} iterations",
+                        Duration::from(&interval).as_secs() * count,
+                        count
+                    );
+
+                    bail!(
+                        "map info not changed for {} seconds and {} iterations, restarting",
+                        Duration::from(&interval).as_secs() * count,
+                        count
+                    );
+                }
+
                 thread::sleep(Duration::from(&interval));
             }
         }
@@ -194,11 +207,4 @@ fn main_with_error(args: Cli) -> Result<(), MainError> {
 fn verify_cli() {
     use clap::CommandFactory;
     Cli::command().debug_assert()
-}
-#[test]
-fn temp_copy() {
-    let src = [0u8, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
-    let mut dst = [0u8; 5];
-    dst[0..3].clone_from_slice(&src[0..3]);
-    dbg!(dst);
 }

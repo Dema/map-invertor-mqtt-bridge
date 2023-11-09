@@ -5,7 +5,6 @@ use std::{
 
 use serialport::SerialPort;
 use snafu::ResultExt;
-use tracing::{instrument, trace};
 
 use super::{IOSnafu, MapError};
 
@@ -38,7 +37,6 @@ pub struct LowLevelProtocol {
     pub last_read_bytes_index: usize,
 }
 impl LowLevelProtocol {
-    #[instrument]
     pub fn new(port: Box<dyn SerialPort>) -> Self {
         Self {
             port,
@@ -47,16 +45,16 @@ impl LowLevelProtocol {
             last_read_bytes_index: 0,
         }
     }
-    #[instrument(skip(self))]
+
     pub fn clear_buffer(&mut self) {
         self.buffer.fill(0);
         self.last_read_bytes_index = 0;
     }
-    #[instrument(skip(self))]
+
     pub fn get_actually_read_slice(&self) -> &[u8] {
         &self.buffer[1..=self.last_read_bytes_index]
     }
-    #[instrument(skip(self))]
+
     fn put_char(&mut self, c: u8) -> Result<(), MapError> {
         let mut verify_buffer: [u8; 1] = [0; 1];
         let mut counter: u8 = 0;
@@ -90,7 +88,7 @@ impl LowLevelProtocol {
 
         Ok(())
     }
-    #[instrument(skip(self))]
+
     fn code_db(&mut self, a: u8) -> Result<(), MapError> {
         if a == (b'\n') {
             self.sum = self.sum.wrapping_add(0xDB);
@@ -107,10 +105,9 @@ impl LowLevelProtocol {
             self.sum = self.sum.wrapping_add(a);
             self.put_char(a)?;
         }
-        tracing::trace!("sum: {}", self.sum);
         Ok(())
     }
-    #[instrument(skip(self))]
+
     pub fn send_command_clean_buffer(
         &mut self,
         command: LowLevelCommands,
@@ -121,7 +118,6 @@ impl LowLevelProtocol {
         self.send_command(command, addr, page)
     }
 
-    #[instrument(skip(self))]
     pub fn send_command(
         &mut self,
         command: LowLevelCommands,
@@ -135,7 +131,7 @@ impl LowLevelProtocol {
         data[2] = (addr >> 8) as u8;
         data[3] = (addr & 0xFF) as u8;
         assert!(page < BUFFER_SIZE);
-        trace!("data: {:?}", data);
+
         for item in &data {
             self.code_db(*item)?;
         }
@@ -154,7 +150,6 @@ impl LowLevelProtocol {
         Ok(())
     }
 
-    #[instrument(skip(self))]
     pub fn read_answer(&mut self) -> Result<(), MapError> {
         self.port
             .read_exact(&mut self.buffer[0..=0])
@@ -221,7 +216,7 @@ impl LowLevelProtocol {
 
         Ok(())
     }
-    #[instrument(skip(self))]
+
     fn decode_answer(&mut self) {
         let mut idx = 1;
 
