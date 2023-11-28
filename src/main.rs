@@ -10,7 +10,7 @@ use map_protocol::{high_level::HighLevelProtocol, NotFoundSnafu};
 use rumqttc::{Client, ClientError, MqttOptions};
 
 use snafu::{Backtrace, ErrorCompat, ResultExt, Snafu};
-use tracing::{info, Level};
+use tracing::Level;
 use tracing_subscriber::FmtSubscriber;
 
 mod map_protocol;
@@ -137,7 +137,7 @@ fn main_with_error(args: Cli) -> Result<(), MainError> {
             // protocol.temp_read_status();
             let eeprom = protocol.read_eeprom().context(MapSnafu {})?;
             if eeprom[0] != 3 {
-                return NotFoundSnafu {}.fail().context(MapSnafu {})?;
+                NotFoundSnafu {}.fail().context(MapSnafu {})?;
             }
             let map_info = protocol.read_status(&eeprom).context(MapSnafu {})?;
             if json_output {
@@ -170,7 +170,7 @@ fn main_with_error(args: Cli) -> Result<(), MainError> {
             let eeprom = protocol.read_eeprom().context(MapSnafu {})?;
 
             if eeprom[0] != 3 {
-                return NotFoundSnafu {}.fail().context(MapSnafu {})?;
+                NotFoundSnafu {}.fail().context(MapSnafu {})?;
             }
             loop {
                 let map_info = protocol.read_status(&eeprom).context(MapSnafu {})?;

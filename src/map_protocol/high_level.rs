@@ -1,3 +1,5 @@
+use std::cmp::Ordering;
+
 use enum_primitive_derive::Primitive;
 use num_traits::FromPrimitive;
 use serde::Serialize;
@@ -20,51 +22,49 @@ use super::{
 // }
 
 #[derive(Default, Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-#[allow(non_snake_case)]
 pub struct MapInfo {
-    _MODE: MapModeExtended,
-    _Status_Char: u8,
-    _Uacc: f32,
-    _Iacc: u32,
-    _PLoad: u32,
-    _F_Acc_Over: u8,
-    _F_Net_Over: u8,
-    _UNET: i32,
-    _INET: u8,
-    _PNET: u32,
-    _TFNET: u8,
-    _ThFMAP: u8,
-    _UOUTmed: u32,
-    _TFNET_Limit: u8,
-    _UNET_Limit: u32,
-    _RSErrSis: u8,
-    _RSErrJobM: u8,
-    _RSErrJob: u8,
-    _RSWarning: u8,
-    _Temp_Grad0: i8,
-    _Temp_Grad2: i8,
-    _INET_16_4: f32,
-    _IAcc_med_A_u16: f32,
-    _Temp_off: u8,
-    _E_NET: u32,
-    _E_ACC: u32,
-    _E_ACC_CHARGE: u32,
-    _Uacc_optim: f32,
-    _I_acc_avg: f32,
-    _I_mppt_avg: f32,
-    _I2C_err: u8,
-    _Temp_Grad1: i8,
-    _Relay1: u8,
-    _Relay2: u8,
-    _Flag_ECO: u8,
-    _RSErrDop: u8,
-    _flagUnet2: u8,
-    I_ph1: f32,
-    I_ph2: f32,
-    I_ph3: f32,
-    I_acc_3ph: f32,
-    MAPS_count: u8,
+    mode: MapModeExtended,
+    status_char: u8,
+    u_acc: f32,
+    i_acc: u32,
+    p_load: u32,
+    f_acc_over: u8,
+    f_net_over: u8,
+    u_net: i32,
+    i_net: u8,
+    p_net: u32,
+    tf_net: u8,
+    th_f_map: u8,
+    u_ou_t_med: u32,
+    tf_net_limit: u8,
+    u_net_limit: u32,
+    rs_err_sis: u8,
+    rs_err_job_m: u8,
+    rs_err_job: u8,
+    rs_warning: u8,
+    temp_grad0: i8,
+    temp_grad1: i8,
+    temp_grad2: i8,
+    i_net_16_4: f32,
+    i_acc_med_a_u16: f32,
+    temp_off: u8,
+    e_net: u32,
+    e_acc: u32,
+    e_acc_charge: u32,
+    u_acc_optim: f32,
+    i_acc_avg: f32,
+    i_mppt_avg: f32,
+    i2_c_err: u8,
+    relay1: u8,
+    relay2: u8,
+    flag_eco: u8,
+    rs_err_dop: u8,
+    flag_u_net2: u8,
+    i_ph1: f32,
+    i_ph2: f32,
+    i_ph3: f32,
+    i_acc_3ph: f32,
+    maps_count: u8,
 }
 
 #[derive(PartialEq, PartialOrd, Debug, Serialize, Primitive, Default)]
@@ -149,34 +149,34 @@ impl HighLevelProtocol {
         match res {
             Ok(_) => {
                 let buffer = self.low_level_protocol.buffer;
-                map_info._Flag_ECO = buffer[0x5F];
-                map_info._Relay1 = buffer[0x60] & 1;
-                map_info._Relay2 = buffer[0x60] & 2;
-                map_info._flagUnet2 = buffer[1];
+                map_info.flag_eco = buffer[0x5F];
+                map_info.relay1 = buffer[0x60] & 1;
+                map_info.relay2 = buffer[0x60] & 2;
+                map_info.flag_u_net2 = buffer[1];
                 //------------3 phase currents calculation---------------------
-                map_info.I_ph1 = (buffer[2] as f32 + ((buffer[3] & 0x7F) as f32) * 256.0) / 10.0;
-                map_info.I_ph2 = (buffer[4] as f32 + ((buffer[5] & 0x7F) as f32) * 256.0) / 10.0;
-                map_info.I_ph3 = (buffer[6] as f32 + ((buffer[7] & 0x7F) as f32) * 256.0) / 10.0;
+                map_info.i_ph1 = (buffer[2] as f32 + ((buffer[3] & 0x7F) as f32) * 256.0) / 10.0;
+                map_info.i_ph2 = (buffer[4] as f32 + ((buffer[5] & 0x7F) as f32) * 256.0) / 10.0;
+                map_info.i_ph3 = (buffer[6] as f32 + ((buffer[7] & 0x7F) as f32) * 256.0) / 10.0;
 
-                map_info.I_ph1 = if buffer[3] & 0x80 == 0 {
-                    map_info.I_ph1
+                map_info.i_ph1 = if buffer[3] & 0x80 == 0 {
+                    map_info.i_ph1
                 } else {
-                    0.0 - map_info.I_ph1
+                    0.0 - map_info.i_ph1
                 };
-                map_info.I_ph2 = if buffer[5] & 0x80 == 0 {
-                    map_info.I_ph2
+                map_info.i_ph2 = if buffer[5] & 0x80 == 0 {
+                    map_info.i_ph2
                 } else {
-                    0.0 - map_info.I_ph2
+                    0.0 - map_info.i_ph2
                 };
-                map_info.I_ph3 = if buffer[7] & 0x80 == 0 {
-                    map_info.I_ph3
+                map_info.i_ph3 = if buffer[7] & 0x80 == 0 {
+                    map_info.i_ph3
                 } else {
-                    0.0 - map_info.I_ph3
+                    0.0 - map_info.i_ph3
                 };
-                map_info.I_acc_3ph = map_info.I_ph1 + map_info.I_ph2 + map_info.I_ph3;
+                map_info.i_acc_3ph = map_info.i_ph1 + map_info.i_ph2 + map_info.i_ph3;
             }
             Err(_) => {
-                map_info._Flag_ECO = 255;
+                map_info.flag_eco = 255;
             }
         }
 
@@ -187,96 +187,96 @@ impl HighLevelProtocol {
 
         let buffer = self.low_level_protocol.buffer;
 
-        map_info._MODE =
+        map_info.mode =
             MapModeExtended::from_i32(buffer[0x400 - 0x3FF] as i32).expect("MapMode is unknown");
-        map_info._MODE = self.real_mode(
-            map_info._MODE,
+        map_info.mode = self.real_mode(
+            map_info.mode,
             eeprom[0x16B],
-            map_info._Flag_ECO,
+            map_info.flag_eco,
             eeprom[0x13C],
             eeprom[0x13B],
-            map_info._UNET,
+            map_info.u_net,
             // eeprom[0x58C],
         );
-        map_info.MAPS_count = if buffer[0x155] == 0xFF {
+        map_info.maps_count = if buffer[0x155] == 0xFF {
             1
         } else {
             buffer[0x155]
         };
 
-        map_info._UNET = buffer[0x422 - 0x3ff] as i32;
-        if map_info._UNET > 0 {
-            map_info._UNET += 100
+        map_info.u_net = buffer[0x422 - 0x3ff] as i32;
+        if map_info.u_net > 0 {
+            map_info.u_net += 100
         }
 
-        map_info._Status_Char = self.low_level_protocol.buffer[0x402 - 0x3ff];
+        map_info.status_char = self.low_level_protocol.buffer[0x402 - 0x3ff];
 
-        map_info._Uacc = (self.low_level_protocol.buffer[0x405 - 0x3FF] as f32 * 256.0
+        map_info.u_acc = (self.low_level_protocol.buffer[0x405 - 0x3FF] as f32 * 256.0
             + self.low_level_protocol.buffer[0x406 - 0x3FF] as f32)
             / 10.0;
 
-        map_info._Iacc = self.low_level_protocol.buffer[0x408 - 0x3FF] as u32 * 2;
+        map_info.i_acc = self.low_level_protocol.buffer[0x408 - 0x3FF] as u32 * 2;
 
-        map_info._PLoad = self.low_level_protocol.buffer[0x409 - 0x3FF] as u32 * 100;
+        map_info.p_load = self.low_level_protocol.buffer[0x409 - 0x3FF] as u32 * 100;
 
-        map_info._F_Acc_Over = self.low_level_protocol.buffer[0x41C - 0x3FF];
+        map_info.f_acc_over = self.low_level_protocol.buffer[0x41C - 0x3FF];
 
-        map_info._F_Net_Over = self.low_level_protocol.buffer[0x41D - 0x3FF];
+        map_info.f_net_over = self.low_level_protocol.buffer[0x41D - 0x3FF];
 
-        map_info._INET = self.low_level_protocol.buffer[0x423 - 0x3FF];
+        map_info.i_net = self.low_level_protocol.buffer[0x423 - 0x3FF];
 
-        map_info._PNET = self.low_level_protocol.buffer[0x424 - 0x3FF] as u32 * 100;
+        map_info.p_net = self.low_level_protocol.buffer[0x424 - 0x3FF] as u32 * 100;
 
-        map_info._TFNET = self.low_level_protocol.buffer[0x425 - 0x3FF];
+        map_info.tf_net = self.low_level_protocol.buffer[0x425 - 0x3FF];
         // закомментировано в оригинале map_info._TFNET = 6250 / map_info._TFNET;
 
-        map_info._ThFMAP = self.low_level_protocol.buffer[0x426 - 0x3FF];
+        map_info.th_f_map = self.low_level_protocol.buffer[0x426 - 0x3FF];
         // закомментировано в оригинале map_info._ThFMAP = 6250 / map_info._ThFMAP;
 
-        map_info._UOUTmed = self.low_level_protocol.buffer[0x427 - 0x3FF] as u32;
-        if map_info._UOUTmed > 0 {
-            map_info._UOUTmed += 100;
+        map_info.u_ou_t_med = self.low_level_protocol.buffer[0x427 - 0x3FF] as u32;
+        if map_info.u_ou_t_med > 0 {
+            map_info.u_ou_t_med += 100;
         }
 
-        map_info._TFNET_Limit = self.low_level_protocol.buffer[0x428 - 0x3FF];
+        map_info.tf_net_limit = self.low_level_protocol.buffer[0x428 - 0x3FF];
         // закомментировано в оригинале if (map_info._TFNET_Limit!=0) map_info._TFNET_Limit= 2500 / map_info._TFNET_Limit;
 
-        map_info._UNET_Limit = self.low_level_protocol.buffer[0x429 - 0x3FF] as u32;
-        map_info._UNET_Limit += 100;
+        map_info.u_net_limit = self.low_level_protocol.buffer[0x429 - 0x3FF] as u32;
+        map_info.u_net_limit += 100;
 
-        map_info._RSErrSis = self.low_level_protocol.buffer[0x42A - 0x3FF];
-        map_info._RSErrJobM = self.low_level_protocol.buffer[0x42B - 0x3FF];
+        map_info.rs_err_sis = self.low_level_protocol.buffer[0x42A - 0x3FF];
+        map_info.rs_err_job_m = self.low_level_protocol.buffer[0x42B - 0x3FF];
 
-        map_info._RSErrJob = self.low_level_protocol.buffer[0x42C - 0x3FF];
+        map_info.rs_err_job = self.low_level_protocol.buffer[0x42C - 0x3FF];
 
-        map_info._RSWarning = self.low_level_protocol.buffer[0x2E];
+        map_info.rs_warning = self.low_level_protocol.buffer[0x2E];
 
-        map_info._Temp_Grad0 = self.low_level_protocol.buffer[0x2F] as i8 - 50;
-        map_info._Temp_Grad1 = self.low_level_protocol.buffer[0x30] as i8 - 50;
+        map_info.temp_grad0 = self.low_level_protocol.buffer[0x2F] as i8 - 50;
+        map_info.temp_grad1 = self.low_level_protocol.buffer[0x30] as i8 - 50;
 
-        map_info._Temp_Grad2 = self.low_level_protocol.buffer[0x430 - 0x3FF] as i8 - 50;
+        map_info.temp_grad2 = self.low_level_protocol.buffer[0x430 - 0x3FF] as i8 - 50;
 
-        if map_info._INET < 16 {
-            map_info._INET_16_4 = self.low_level_protocol.buffer[0x32] as f32 / 16.0;
+        if map_info.i_net < 16 {
+            map_info.i_net_16_4 = self.low_level_protocol.buffer[0x32] as f32 / 16.0;
         } else {
-            map_info._INET_16_4 = self.low_level_protocol.buffer[0x32] as f32 / 4.0;
+            map_info.i_net_16_4 = self.low_level_protocol.buffer[0x32] as f32 / 4.0;
         }
 
-        map_info._IAcc_med_A_u16 = self.low_level_protocol.buffer[0x34] as f32 * 16.0
+        map_info.i_acc_med_a_u16 = self.low_level_protocol.buffer[0x34] as f32 * 16.0
             + self.low_level_protocol.buffer[0x33] as f32 / 16.0;
 
-        map_info._Temp_off = self.low_level_protocol.buffer[0x43C - 0x3FF];
-        map_info._E_NET = self.low_level_protocol.buffer[0x50] as u32 * 65536
+        map_info.temp_off = self.low_level_protocol.buffer[0x43C - 0x3FF];
+        map_info.e_net = self.low_level_protocol.buffer[0x50] as u32 * 65536
             + self.low_level_protocol.buffer[0x4F] as u32 * 256
             + self.low_level_protocol.buffer[0x4E] as u32;
-        map_info._E_ACC = self.low_level_protocol.buffer[0x53] as u32 * 65536
+        map_info.e_acc = self.low_level_protocol.buffer[0x53] as u32 * 65536
             + self.low_level_protocol.buffer[0x52] as u32 * 256
             + self.low_level_protocol.buffer[0x51] as u32;
-        map_info._E_ACC_CHARGE = self.low_level_protocol.buffer[0x56] as u32 * 65536
+        map_info.e_acc_charge = self.low_level_protocol.buffer[0x56] as u32 * 65536
             + self.low_level_protocol.buffer[0x55] as u32 * 256
             + self.low_level_protocol.buffer[0x54] as u32;
-        map_info._I2C_err = self.low_level_protocol.buffer[0x45A - 0x3FF];
-        map_info._RSErrDop = self.low_level_protocol.buffer[0x447 - 0x3FF];
+        map_info.i2_c_err = self.low_level_protocol.buffer[0x45A - 0x3FF];
+        map_info.rs_err_dop = self.low_level_protocol.buffer[0x447 - 0x3FF];
 
         // //---------------------------Checking EEPROM change-------------------------
 
@@ -338,31 +338,17 @@ impl HighLevelProtocol {
 
             if mode == MapModeExtended::PowerOnTranslatingExternalPower {
                 if net_alg == 2 {
-                    // return match (flag_eco & 1).cmp(&0u8) {
-                    //     Ordering::Greater => MapModeExtended::WaitingForExternalCharge,
-                    //     Ordering::Equal => MapModeExtended::TranslationECOPumping,
-                    //     Ordering::Less => mode,
-                    // };
-                    if flag_eco & 1 > 0 {
-                        return MapModeExtended::WaitingForExternalCharge;
-                    } else if flag_eco & 1 == 0 {
-                        return MapModeExtended::TranslationECOPumping;
-                    } else {
-                        return mode;
-                    }
+                    return match (flag_eco & 1).cmp(&0u8) {
+                        Ordering::Greater => MapModeExtended::WaitingForExternalCharge,
+                        Ordering::Equal => MapModeExtended::TranslationECOPumping,
+                        Ordering::Less => mode,
+                    };
                 } else if net_alg == 3 {
-                    // return match (flag_eco & 2).cmp(&0u8) {
-                    //     Ordering::Greater => MapModeExtended::SellingBackToGridMinRate,
-                    //     Ordering::Equal => MapModeExtended::SellingBackToGridTranslationEcoPumping,
-                    //     Ordering::Less => mode,
-                    // };
-                    if flag_eco & 2 > 0 {
-                        return MapModeExtended::SellingBackToGridMinRate;
-                    } else if flag_eco & 2 == 0 {
-                        return MapModeExtended::SellingBackToGridTranslationEcoPumping;
-                    } else {
-                        return mode;
-                    }
+                    return match (flag_eco & 2).cmp(&0u8) {
+                        Ordering::Greater => MapModeExtended::SellingBackToGridMinRate,
+                        Ordering::Equal => MapModeExtended::SellingBackToGridTranslationEcoPumping,
+                        Ordering::Less => mode,
+                    };
                 } else {
                     return mode;
                 }
