@@ -298,7 +298,7 @@ impl HighLevelProtocol {
         net_alg: u8,
         flag_eco: u8,
         net_up_eco: u8,
-        net_up_load: u8,
+        _net_up_load: u8,
         unet: i32,
         // Pmax_On: u8,
     ) -> MapModeExtended {

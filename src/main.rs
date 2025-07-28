@@ -1,16 +1,15 @@
-use log::{self, info, trace, warn};
-use std::{
-    fmt::{format, Debug},
-    thread,
-    time::Duration,
-};
+use log::{self, info, warn};
+use std::{backtrace::Backtrace, thread, time::Duration};
 
 use anyhow::bail;
 use clap::{Args, Command, FromArgMatches, Parser, Subcommand};
 use clap_complete::{generate, Generator, Shell};
 use clap_duration::duration_range_value_parse;
 use duration_human::{DurationHuman, DurationHumanValidator};
-use map_protocol::high_level::{HighLevelProtocol, MapInfo};
+use map_protocol::{
+    high_level::{HighLevelProtocol, MapInfo},
+    MapError,
+};
 
 use paho_mqtt::{Message, QOS_1};
 
@@ -22,41 +21,49 @@ struct Cli {
     #[command(subcommand)]
     mode: WorkingMode,
 }
+#[derive(Clone, Debug, Args)]
 
-#[derive(Clone, Debug, Subcommand)]
-enum WorkingMode {
-    Mqtt {
-        /// Map port
-        #[arg(short = 'p', long, env)]
-        map_port: String,
-        /// Map port peed
-        #[arg(short = 's', long, env)]
-        map_port_speed: u32,
-        /// MQTT broker hostname
-        #[arg(short, long, env)]
-        mqtt_hostname: String,
-        /// MQTT broker port
-        #[arg(long, env)]
-        mqtt_port: u16,
-        /// MQTT broker username
-        #[arg(long, env)]
-        mqtt_username: String,
-        /// MQTT broker password
-        #[arg(long, env)]
-        mqtt_password: String,
-        /// MQTT broker topic
-        #[arg(long, env)]
-        mqtt_topic: Option<String>,
-        /// my id, default is "map-invertor-mqtt-bridge"
-        #[arg(long, env)]
-        mqtt_id: Option<String>,
-        /// Polling interval
-        #[arg(
+struct MqttParams {
+    /// Map port
+    #[arg(short = 'p', long, env)]
+    map_port: String,
+    /// Map port peed
+    #[arg(short = 's', long, env)]
+    map_port_speed: u32,
+    /// MQTT broker hostname
+    #[arg(short, long, env)]
+    mqtt_hostname: String,
+    /// MQTT broker port
+    #[arg(long, env)]
+    mqtt_port: u16,
+    /// MQTT broker username
+    #[arg(long, env)]
+    mqtt_username: String,
+    /// MQTT broker password
+    #[arg(long, env)]
+    mqtt_password: String,
+    /// MQTT broker topic
+    #[arg(long, env)]
+    mqtt_topic: Option<String>,
+    /// my id, default is "map-invertor-mqtt-bridge"
+    #[arg(long, env)]
+    mqtt_id: Option<String>,
+    /// Polling interval
+    #[arg(
         long, default_value="10s",
         value_parser = duration_range_value_parse!(min: 1s, max: 10min)
     )]
-        interval: DurationHuman,
-    },
+    interval: DurationHuman,
+    /// Interval betweeen attempts to reconnect to MAP or MQTT server.
+    /// Default is to not reconnect
+    #[arg(
+            long,value_parser = duration_range_value_parse!(min: 1s, max: 10min)
+        )]
+    reconnect_every: Option<DurationHuman>,
+}
+#[derive(Clone, Debug, Subcommand)]
+enum WorkingMode {
+    Mqtt(MqttParams),
     Stdout {
         /// Map port
         #[arg(short = 'p', long, env)]
@@ -107,13 +114,13 @@ fn main() -> anyhow::Result<()> {
             let port = serialport::new(map_port, map_port_speed)
                 .timeout(Duration::from_secs(20))
                 .open()?;
-            let mut protocol = HighLevelProtocol::new(port)?;
+            let mut map_protocol = HighLevelProtocol::new(port)?;
 
-            let eeprom = protocol.read_eeprom()?;
+            let eeprom = map_protocol.read_eeprom()?;
             if eeprom[0] != 3 {
                 bail!("MAP not found");
             }
-            let map_info = protocol.read_status(&eeprom)?;
+            let map_info = map_protocol.read_status(&eeprom)?;
             if json_output {
                 print!(
                     "{}",
@@ -124,83 +131,93 @@ fn main() -> anyhow::Result<()> {
                 dbg!(map_info);
             };
         }
-        WorkingMode::Mqtt {
-            map_port,
-            map_port_speed,
-            mqtt_hostname,
-            mqtt_port,
-            mqtt_username,
-            mqtt_password,
-            mqtt_topic,
-            mqtt_id,
-            interval,
-        } => {
-            let port = serialport::new(&map_port, map_port_speed)
-                .timeout(Duration::from_secs(20))
-                .open()?;
-            info!("Map port {} opened", map_port);
-            let mut map_protocol = HighLevelProtocol::new(port)?;
-            let mqtt_id = mqtt_id.unwrap_or("map-invertor-mqtt-bridge".into());
-
-            let url: String = format!("tcp://{mqtt_hostname}:{mqtt_port}");
-
-            let cli = paho_mqtt::Client::new((url.clone(), mqtt_id))?;
-            let conn_opts = paho_mqtt::ConnectOptionsBuilder::new()
-                .keep_alive_interval(Duration::from_secs(20))
-                .user_name(&mqtt_username)
-                .password(&mqtt_password)
-                .clean_session(true)
-                .finalize();
-
-            cli.connect(conn_opts)?;
-            info!("connected to MQTT broker at {}", url);
-            let eeprom = map_protocol.read_eeprom()?;
-
-            if eeprom[0] != 3 {
-                bail!("MAP not found");
-            }
-            let topic = &mqtt_topic.unwrap_or("map-invertor/1".into());
-            let mut count = 0;
-            let mut consecutive_same_reads = 0;
-
-            let max_consecutive_reads = 300 / Duration::from(&interval).as_secs();
-
-            let mut prev_map_info = MapInfo::default();
-            loop {
-                let map_info = map_protocol.read_status(&eeprom)?;
-                // let map_info = MapInfo::default();
-                if prev_map_info != map_info {
-                    let msg =
-                        Message::new_retained(topic, serde_json::to_vec(&map_info).unwrap(), QOS_1);
-                    cli.publish(msg)?;
-                    prev_map_info = map_info;
-                    consecutive_same_reads = 0;
-                } else {
-                    consecutive_same_reads += 1;
+        WorkingMode::Mqtt(params) => {
+            if params.reconnect_every.is_some() {
+                loop {
+                    let result = mqtt_run_one_cycle(&params);
+                    if result.is_err() {
+                        warn!("{:?}", result.err().unwrap());
+                        thread::sleep(Duration::from(&params.reconnect_every.unwrap()));
+                    }
                 }
-                count = (count + 1) % 10;
-                trace!("map info: {:?}", &prev_map_info);
-                trace!("count: {}", count);
-                trace!("consecutive_same_reads: {}", consecutive_same_reads);
-                if consecutive_same_reads > max_consecutive_reads {
-                    warn!(
-                        "map info not changed for {} seconds and {} iterations",
-                        Duration::from(&interval).as_secs() * count,
-                        count
-                    );
-
-                    bail!(
-                        "map info not changed for {} seconds and {} iterations, restarting",
-                        Duration::from(&interval).as_secs() * count,
-                        count
-                    );
-                }
-
-                thread::sleep(Duration::from(&interval));
+            } else {
+                mqtt_run_one_cycle(&params)?
             }
         }
     }
     Ok(())
+}
+
+fn mqtt_run_one_cycle(mqtt_params: &MqttParams) -> Result<(), anyhow::Error> {
+    let port = serialport::new(&mqtt_params.map_port, mqtt_params.map_port_speed)
+        .timeout(Duration::from_secs(20))
+        .open()?;
+    info!("Map port {} opened", mqtt_params.map_port);
+    let mut map_protocol = HighLevelProtocol::new(port)?;
+    let mqtt_id = mqtt_params
+        .mqtt_id
+        .as_deref()
+        .unwrap_or("map-invertor-mqtt-bridge");
+    // .unwrap_or("map-invertor-mqtt-bridge".into());
+    let url: String = format!(
+        "tcp://{}:{}",
+        mqtt_params.mqtt_hostname, mqtt_params.mqtt_port
+    );
+    let cli = paho_mqtt::Client::new((url.clone(), mqtt_id.to_string()))?;
+    let conn_opts = paho_mqtt::ConnectOptionsBuilder::new()
+        .keep_alive_interval(Duration::from_secs(20))
+        .user_name(&mqtt_params.mqtt_username)
+        .password(&mqtt_params.mqtt_password)
+        .clean_session(true)
+        .finalize();
+    cli.connect(conn_opts)?;
+
+    info!("connected to MQTT broker at {}", url);
+    let eeprom = map_protocol.read_eeprom()?;
+    if eeprom[0] != 3 {
+        return Err(MapError::NotFound {
+            backtrace: Backtrace::capture(),
+        }
+        .into());
+    }
+
+    let topic = mqtt_params
+        .mqtt_topic
+        .as_deref()
+        .unwrap_or("map-invertor/1");
+    let mut reads_count = 0;
+    let mut consecutive_same_reads = 0;
+    let interval = Duration::from(&mqtt_params.interval);
+    let interval_in_seconds = interval.as_secs();
+    let max_consecutive_reads = 300 / interval_in_seconds;
+    let mut prev_map_info = MapInfo::default();
+    loop {
+        let map_info = map_protocol.read_status(&eeprom)?;
+        if prev_map_info != map_info {
+            let msg = Message::new_retained(topic, serde_json::to_vec(&map_info).unwrap(), QOS_1);
+            cli.publish(msg)?;
+            prev_map_info = map_info;
+            consecutive_same_reads = 0;
+        } else {
+            consecutive_same_reads += 1;
+        }
+        reads_count = (reads_count + 1) % 10;
+        if consecutive_same_reads > max_consecutive_reads {
+            warn!(
+                "map info not changed for {} seconds and {} iterations",
+                interval_in_seconds * reads_count,
+                reads_count
+            );
+
+            bail!(
+                "map info not changed for {} seconds and {} iterations, restarting",
+                interval_in_seconds * reads_count,
+                reads_count
+            );
+        }
+
+        thread::sleep(interval);
+    }
 }
 
 #[test]
