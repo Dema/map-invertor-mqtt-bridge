@@ -4,9 +4,8 @@ use std::{
 };
 
 use serialport::SerialPort;
-use snafu::ResultExt;
 
-use super::{IOSnafu, MapError};
+use super::MapError;
 
 const BUFFER_SIZE: u16 = 560;
 
@@ -59,19 +58,14 @@ impl LowLevelProtocol {
         let mut verify_buffer: [u8; 1] = [0; 1];
         let mut counter: u8 = 0;
 
-        if self.port.write(&[c]).context(IOSnafu)? != verify_buffer.len() {
-            return Err(MapError::WriteError {
-                backtrace: std::backtrace::Backtrace::capture(),
-            });
+        if self.port.write(&[c])? != verify_buffer.len() {
+            return Err(MapError::WriteError);
         }
         loop {
             {
-                let bytes_read = self.port.read(&mut verify_buffer).context(IOSnafu)?;
+                let bytes_read = self.port.read(&mut verify_buffer)?;
                 if bytes_read != 1 {
-                    return Err(MapError::VerifyReadAfterWriteError {
-                        backtrace: std::backtrace::Backtrace::capture(),
-                        count: bytes_read,
-                    });
+                    return Err(MapError::VerifyReadAfterWriteError { count: bytes_read });
                 }
             }
 
@@ -80,9 +74,7 @@ impl LowLevelProtocol {
             }
             counter += 1;
             if counter > 20 {
-                return Err(MapError::VerifyReadAfterWriteRunawayError {
-                    backtrace: std::backtrace::Backtrace::capture(),
-                });
+                return Err(MapError::VerifyReadAfterWriteRunawayError);
             }
         }
 
@@ -152,37 +144,30 @@ impl LowLevelProtocol {
 
     pub fn read_answer(&mut self) -> Result<(), MapError> {
         self.port
-            .read_exact(&mut self.buffer[0..=0])
-            .context(IOSnafu)?;
+            .read_exact(&mut self.buffer[0..=0])?;
 
         let mut idx: usize = 0;
 
         loop {
             self.port
-                .write_all(&self.buffer[idx..=idx])
-                .context(IOSnafu)?;
+                .write_all(&self.buffer[idx..=idx])?;
 
             idx += 1;
             self.port
-                .read_exact(&mut self.buffer[idx..=idx])
-                .context(IOSnafu)?;
+                .read_exact(&mut self.buffer[idx..=idx])?;
 
             if self.buffer[idx] == 0x0A || idx >= self.buffer.len() - 1 {
                 break;
             }
         }
         self.port
-            .write_all(&self.buffer[idx..=idx])
-            .context(IOSnafu)?;
+            .write_all(&self.buffer[idx..=idx])?;
 
         if self.buffer[0] == 0x65 {
-            return Err(MapError::FirstByteis65DontKnowWhatItMeans {
-                backtrace: std::backtrace::Backtrace::capture(),
-            });
+            return Err(MapError::FirstByteis65DontKnowWhatItMeans);
         }
         if self.buffer[0] != 0x6f {
             return Err(MapError::UnknownValueError {
-                backtrace: std::backtrace::Backtrace::capture(),
                 value: (self.buffer[0]),
             });
         }
@@ -202,13 +187,11 @@ impl LowLevelProtocol {
         if sum_r == 0x0a && self.buffer[idx] != 0x0a {
             return Err(MapError::ChecksumFailed {
                 value: sum_r,
-                backtrace: std::backtrace::Backtrace::capture(),
             });
         }
         if sum_r != 0x0a && sum_r != self.buffer[idx - 1] {
             return Err(MapError::ChecksumFailed {
                 value: sum_r,
-                backtrace: std::backtrace::Backtrace::capture(),
             });
         }
         self.last_read_bytes_index = idx;

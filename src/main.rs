@@ -1,5 +1,5 @@
 use log::{self, info, warn};
-use std::{backtrace::Backtrace, thread, time::Duration};
+use std::{thread, time::Duration};
 
 use anyhow::bail;
 use clap::{Args, Command, FromArgMatches, Parser, Subcommand};
@@ -175,10 +175,7 @@ fn mqtt_run_one_cycle(mqtt_params: &MqttParams) -> Result<(), anyhow::Error> {
     info!("connected to MQTT broker at {}", url);
     let eeprom = map_protocol.read_eeprom()?;
     if eeprom[0] != 3 {
-        return Err(MapError::NotFound {
-            backtrace: Backtrace::capture(),
-        }
-        .into());
+        return Err(MapError::NotFound.into());
     }
 
     let topic = mqtt_params
