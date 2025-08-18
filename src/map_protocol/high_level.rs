@@ -431,9 +431,13 @@ impl HighLevelProtocol {
         unet: i32,
         // Pmax_On: u8,
     ) -> MapModeExtended {
-        if mode != MapModeExtended::PowerOnGeneratingNoExternalPower
-            || mode != MapModeExtended::PowerOnTranslatingExternalPower
-        {
+        if matches!(
+            mode,
+            MapModeExtended::PowerOnGeneratingNoExternalPower
+                | MapModeExtended::PowerOnTranslatingExternalPower
+        ) {
+            // Process these specific modes
+        } else {
             return mode;
         }
 
