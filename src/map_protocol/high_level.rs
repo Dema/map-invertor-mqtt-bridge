@@ -65,7 +65,136 @@ pub struct MapInfo {
     maps_count: u8,
 }
 
-#[derive(PartialEq, PartialOrd, Debug, Serialize, Primitive, Default)]
+impl MapInfo {
+    pub fn mode(&self) -> MapModeExtended {
+        self.mode
+    }
+    pub fn status_char(&self) -> u8 {
+        self.status_char
+    }
+    pub fn u_acc(&self) -> f32 {
+        self.u_acc
+    }
+    pub fn i_acc(&self) -> u32 {
+        self.i_acc
+    }
+    pub fn p_load(&self) -> u32 {
+        self.p_load
+    }
+    pub fn f_acc_over(&self) -> u8 {
+        self.f_acc_over
+    }
+    pub fn f_net_over(&self) -> u8 {
+        self.f_net_over
+    }
+    pub fn u_net(&self) -> i32 {
+        self.u_net
+    }
+    pub fn i_net(&self) -> u8 {
+        self.i_net
+    }
+    pub fn p_net(&self) -> u32 {
+        self.p_net
+    }
+    pub fn tf_net(&self) -> u8 {
+        self.tf_net
+    }
+    pub fn th_f_map(&self) -> u8 {
+        self.th_f_map
+    }
+    pub fn u_ou_t_med(&self) -> u32 {
+        self.u_ou_t_med
+    }
+    pub fn tf_net_limit(&self) -> u8 {
+        self.tf_net_limit
+    }
+    pub fn u_net_limit(&self) -> u32 {
+        self.u_net_limit
+    }
+    pub fn rs_err_sis(&self) -> u8 {
+        self.rs_err_sis
+    }
+    pub fn rs_err_job_m(&self) -> u8 {
+        self.rs_err_job_m
+    }
+    pub fn rs_err_job(&self) -> u8 {
+        self.rs_err_job
+    }
+    pub fn rs_warning(&self) -> u8 {
+        self.rs_warning
+    }
+    pub fn temp_grad0(&self) -> i8 {
+        self.temp_grad0
+    }
+    pub fn temp_grad1(&self) -> i8 {
+        self.temp_grad1
+    }
+    pub fn temp_grad2(&self) -> i8 {
+        self.temp_grad2
+    }
+    pub fn i_net_16_4(&self) -> f32 {
+        self.i_net_16_4
+    }
+    pub fn i_acc_med_a_u16(&self) -> f32 {
+        self.i_acc_med_a_u16
+    }
+    pub fn temp_off(&self) -> u8 {
+        self.temp_off
+    }
+    pub fn e_net(&self) -> u32 {
+        self.e_net
+    }
+    pub fn e_acc(&self) -> u32 {
+        self.e_acc
+    }
+    pub fn e_acc_charge(&self) -> u32 {
+        self.e_acc_charge
+    }
+    pub fn u_acc_optim(&self) -> f32 {
+        self.u_acc_optim
+    }
+    pub fn i_acc_avg(&self) -> f32 {
+        self.i_acc_avg
+    }
+    pub fn i_mppt_avg(&self) -> f32 {
+        self.i_mppt_avg
+    }
+    pub fn i2_c_err(&self) -> u8 {
+        self.i2_c_err
+    }
+    pub fn relay1(&self) -> u8 {
+        self.relay1
+    }
+    pub fn relay2(&self) -> u8 {
+        self.relay2
+    }
+    pub fn flag_eco(&self) -> u8 {
+        self.flag_eco
+    }
+    pub fn rs_err_dop(&self) -> u8 {
+        self.rs_err_dop
+    }
+    pub fn flag_u_net2(&self) -> u8 {
+        self.flag_u_net2
+    }
+    pub fn i_ph1(&self) -> f32 {
+        self.i_ph1
+    }
+    pub fn i_ph2(&self) -> f32 {
+        self.i_ph2
+    }
+    pub fn i_ph3(&self) -> f32 {
+        self.i_ph3
+    }
+    pub fn i_acc_3ph(&self) -> f32 {
+        self.i_acc_3ph
+    }
+    pub fn maps_count(&self) -> u8 {
+        self.maps_count
+    }
+}
+
+#[derive(PartialEq, PartialOrd, Debug, Serialize, Primitive, Default, Copy, Clone)]
 #[repr(u8)]
 pub enum MapModeExtended {
     /// МАП выключен и нет сети на входе
@@ -371,3 +500,4 @@ impl HighLevelProtocol {
         }
     }
 }
+
