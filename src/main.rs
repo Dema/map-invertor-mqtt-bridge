@@ -22,14 +22,19 @@ struct Cli {
     mode: WorkingMode,
 }
 #[derive(Clone, Debug, Args)]
-
-struct MqttParams {
+struct SerialParams {
     /// Map port
     #[arg(short = 'p', long, env)]
     map_port: String,
-    /// Map port peed
+    /// Map port speed
     #[arg(short = 's', long, env)]
     map_port_speed: u32,
+}
+
+#[derive(Clone, Debug, Args)]
+struct MqttParams {
+    #[command(flatten)]
+    serial_params: SerialParams,
     /// MQTT broker hostname
     #[arg(short, long, env)]
     mqtt_hostname: String,
@@ -65,12 +70,8 @@ struct MqttParams {
 enum WorkingMode {
     Mqtt(MqttParams),
     Stdout {
-        /// Map port
-        #[arg(short = 'p', long, env)]
-        map_port: String,
-        /// Map port speed
-        #[arg(short = 's', long, env)]
-        map_port_speed: u32,
+        #[command(flatten)]
+        serial_params: SerialParams,
         /// When not using MQTT dump to stdout as JSON instead of human readable text
         #[arg(short, long)]
         json_output: bool,
@@ -107,11 +108,10 @@ fn main() -> anyhow::Result<()> {
             print_completions(shell, &mut cli);
         }
         WorkingMode::Stdout {
-            map_port,
-            map_port_speed,
+            serial_params,
             json_output,
         } => {
-            let port = serialport::new(map_port, map_port_speed)
+            let port = serialport::new(serial_params.map_port, serial_params.map_port_speed)
                 .timeout(Duration::from_secs(20))
                 .open()?;
             let mut map_protocol = HighLevelProtocol::new(port)?;
@@ -149,10 +149,13 @@ fn main() -> anyhow::Result<()> {
 }
 
 fn mqtt_run_one_cycle(mqtt_params: &MqttParams) -> Result<(), anyhow::Error> {
-    let port = serialport::new(&mqtt_params.map_port, mqtt_params.map_port_speed)
-        .timeout(Duration::from_secs(20))
-        .open()?;
-    info!("Map port {} opened", mqtt_params.map_port);
+    let port = serialport::new(
+        &mqtt_params.serial_params.map_port,
+        mqtt_params.serial_params.map_port_speed,
+    )
+    .timeout(Duration::from_secs(20))
+    .open()?;
+    info!("Map port {} opened", mqtt_params.serial_params.map_port);
     let mut map_protocol = HighLevelProtocol::new(port)?;
     let mqtt_id = mqtt_params
         .mqtt_id
