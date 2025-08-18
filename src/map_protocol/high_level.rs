@@ -19,6 +19,33 @@ use super::{
 //     pub const BMS_LOW_T: u8 = 0;
 // }
 
+// Inverter protocol constants
+pub struct InverterConstants;
+
+impl InverterConstants {
+    // Register addresses
+    pub const MODE_REGISTER_ADDRESS: usize = 0x400;
+    pub const REGISTER_BASE_ADDRESS: usize = 0x3FF;
+    pub const U_NET_REGISTER_OFFSET: usize = 0x422;
+    pub const MAPS_COUNT_REGISTER_OFFSET: usize = 0x155;
+    pub const FLAG_ECO_REGISTER_OFFSET: usize = 0x5F;
+    
+    // Status and control values
+    pub const MAX_BYTE_VALUE: u8 = 0xFF;
+    pub const FLAG_ECO_ERROR_VALUE: u8 = 255;
+    
+    // Calculation factors
+    pub const VOLTAGE_OFFSET: i32 = 100;
+    pub const CURRENT_DIVISOR: f32 = 10.0;
+    pub const BYTE_MULTIPLIER: f32 = 256.0;
+    pub const I_ACC_MULTIPLIER: u32 = 2;
+    pub const POWER_MULTIPLIER: u32 = 100;
+    pub const HIGH_BYTE_MULTIPLIER: f32 = 65536.0;
+    pub const TEMPERATURE_OFFSET: i8 = 50;
+    pub const LOW_CURRENT_DIVISOR: f32 = 16.0;
+    pub const HIGH_CURRENT_DIVISOR: f32 = 4.0;
+}
+
 #[derive(Default, Debug, Serialize, PartialEq)]
 pub struct MapInfo {
     mode: MapModeExtended,
@@ -194,6 +221,24 @@ impl MapInfo {
     }
 }
 
+use std::fmt;
+
+impl fmt::Display for MapInfo {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        writeln!(f, "Inverter Status:")?;
+        writeln!(f, "  Mode: {:?}", self.mode)?;
+        writeln!(f, "  Status Char: {}", self.status_char)?;
+        writeln!(f, "  Accumulator Voltage: {:.2} V", self.u_acc)?;
+        writeln!(f, "  Accumulator Current: {} A", self.i_acc)?;
+        writeln!(f, "  Load Power: {} W", self.p_load)?;
+        writeln!(f, "  Network Voltage: {} V", self.u_net)?;
+        writeln!(f, "  Network Current: {} A", self.i_net)?;
+        writeln!(f, "  Network Power: {} W", self.p_net)?;
+        writeln!(f, "  Maps Count: {}", self.maps_count)?;
+        Ok(())
+    }
+}
+
 #[derive(PartialEq, PartialOrd, Debug, Serialize, Primitive, Default, Copy, Clone)]
 #[repr(u8)]
 pub enum MapModeExtended {
@@ -302,7 +347,7 @@ impl HighLevelProtocol {
                 map_info.i_acc_3ph = map_info.i_ph1 + map_info.i_ph2 + map_info.i_ph3;
             }
             Err(_) => {
-                map_info.flag_eco = 255;
+                map_info.flag_eco = InverterConstants::FLAG_ECO_ERROR_VALUE;
             }
         }
 
@@ -314,7 +359,7 @@ impl HighLevelProtocol {
         let buffer = self.low_level_protocol.buffer;
 
         map_info.mode =
-            MapModeExtended::from_i32(buffer[0x400 - 0x3FF] as i32).expect("MapMode is unknown");
+            MapModeExtended::from_i32(buffer[InverterConstants::MODE_REGISTER_ADDRESS - InverterConstants::REGISTER_BASE_ADDRESS] as i32).expect("MapMode is unknown");
         map_info.mode = self.real_mode(
             map_info.mode,
             eeprom[0x16B],
@@ -324,24 +369,24 @@ impl HighLevelProtocol {
             map_info.u_net,
             // eeprom[0x58C],
         );
-        map_info.maps_count = if buffer[0x155] == 0xFF {
+        map_info.maps_count = if buffer[InverterConstants::MAPS_COUNT_REGISTER_OFFSET] == InverterConstants::MAX_BYTE_VALUE {
             1
         } else {
-            buffer[0x155]
+            buffer[InverterConstants::MAPS_COUNT_REGISTER_OFFSET]
         };
 
-        map_info.u_net = buffer[0x422 - 0x3ff] as i32;
+        map_info.u_net = buffer[InverterConstants::U_NET_REGISTER_OFFSET - InverterConstants::REGISTER_BASE_ADDRESS] as i32;
         if map_info.u_net > 0 {
-            map_info.u_net += 100
+            map_info.u_net += InverterConstants::VOLTAGE_OFFSET
         }
 
-        map_info.status_char = self.low_level_protocol.buffer[0x402 - 0x3ff];
+        map_info.status_char = self.low_level_protocol.buffer[0x402 - InverterConstants::REGISTER_BASE_ADDRESS];
 
-        map_info.u_acc = (self.low_level_protocol.buffer[0x405 - 0x3FF] as f32 * 256.0
-            + self.low_level_protocol.buffer[0x406 - 0x3FF] as f32)
-            / 10.0;
+        map_info.u_acc = (self.low_level_protocol.buffer[0x405 - InverterConstants::REGISTER_BASE_ADDRESS] as f32 * InverterConstants::BYTE_MULTIPLIER
+            + self.low_level_protocol.buffer[0x406 - InverterConstants::REGISTER_BASE_ADDRESS] as f32)
+            / InverterConstants::CURRENT_DIVISOR;
 
-        map_info.i_acc = self.low_level_protocol.buffer[0x408 - 0x3FF] as u32 * 2;
+        map_info.i_acc = self.low_level_protocol.buffer[0x408 - InverterConstants::REGISTER_BASE_ADDRESS] as u32 * InverterConstants::I_ACC_MULTIPLIER;
 
         map_info.p_load = self.low_level_protocol.buffer[0x409 - 0x3FF] as u32 * 100;
 

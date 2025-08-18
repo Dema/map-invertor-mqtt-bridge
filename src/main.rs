@@ -128,7 +128,7 @@ fn main() -> anyhow::Result<()> {
                         .expect("Cannot serialize map_info value")
                 );
             } else {
-                dbg!(map_info);
+                log::debug!("{:?}", map_info);
             };
         }
         WorkingMode::Mqtt(params) => {
