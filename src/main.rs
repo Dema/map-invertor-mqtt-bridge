@@ -15,6 +15,8 @@ use paho_mqtt::{Message, QOS_1};
 
 mod map_protocol;
 
+const MAX_CONSECUTIVE_READS: u32 = 10;
+
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
 struct Cli {
@@ -132,12 +134,13 @@ fn main() -> anyhow::Result<()> {
             };
         }
         WorkingMode::Mqtt(params) => {
-            if params.reconnect_every.is_some() {
+            if let Some(reconnect_every) = params.reconnect_every {
+                let reconnect_every = Duration::from(&reconnect_every);
                 loop {
                     let result = mqtt_run_one_cycle(&params);
                     if result.is_err() {
                         warn!("{:?}", result.err().unwrap());
-                        thread::sleep(Duration::from(&params.reconnect_every.unwrap()));
+                        thread::sleep(reconnect_every);
                     }
                 }
             } else {
@@ -189,7 +192,6 @@ fn mqtt_run_one_cycle(mqtt_params: &MqttParams) -> Result<(), anyhow::Error> {
     let mut consecutive_same_reads = 0;
     let interval = Duration::from(&mqtt_params.interval);
     let interval_in_seconds = interval.as_secs();
-    let max_consecutive_reads = 300 / interval_in_seconds;
     let mut prev_map_info = MapInfo::default();
     loop {
         let map_info = map_protocol.read_status(&eeprom)?;
@@ -202,7 +204,7 @@ fn mqtt_run_one_cycle(mqtt_params: &MqttParams) -> Result<(), anyhow::Error> {
             consecutive_same_reads += 1;
         }
         reads_count = (reads_count + 1) % 10;
-        if consecutive_same_reads > max_consecutive_reads {
+        if consecutive_same_reads > MAX_CONSECUTIVE_READS {
             warn!(
                 "map info not changed for {} seconds and {} iterations",
                 interval_in_seconds * reads_count,
