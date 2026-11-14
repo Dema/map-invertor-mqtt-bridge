@@ -1,6 +1,6 @@
-# Gemini Code Assistant Workspace
+# Agent Instructions
 
-This file provides context to the Gemini code assistant, helping it understand the project structure, purpose, and key components.
+Context for coding agents working in this repository: what the project does, how it is structured, and how to run it.
 
 ## Project Overview
 
@@ -19,7 +19,7 @@ This file provides context to the Gemini code assistant, helping it understand t
 - `paho-mqtt`: Handles all communication with the MQTT broker.
 - `serialport`: Manages the serial port communication with the MAP inverter.
 - `serde` & `serde_json`: Used for serializing the inverter data into JSON format for MQTT messages and stdout output.
-- `anyhow`, `snafu`, `thiserror`: A combination of error-handling libraries to manage potential issues gracefully.
+- `anyhow`, `thiserror`: Error handling — `anyhow` at application boundaries, `thiserror` for typed errors.
 - `log` & `env_logger`: For logging application events.
 
 **Cross-Compilation:**
