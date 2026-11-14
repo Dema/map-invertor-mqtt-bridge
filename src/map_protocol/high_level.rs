@@ -29,9 +29,9 @@ impl InverterConstants {
     /// indexed as `register address - REGISTER_BASE_ADDRESS`.
     pub const REGISTER_BASE_ADDRESS: usize = 0x400;
     pub const U_NET_REGISTER_OFFSET: usize = 0x422;
-    /// Offset inside the status answer, not a register address: mapd.c read it
-    /// from `eeprom[0x155]`, this port reads it from the status answer.
-    pub const MAPS_COUNT_REGISTER_OFFSET: usize = 0x154;
+    /// Offset inside the EEPROM config page, not in the status answer: mapd.c
+    /// takes the number of parallel MAP units from `eeprom[0x155]`.
+    pub const MAPS_COUNT_EEPROM_OFFSET: usize = 0x155;
     pub const FLAG_ECO_REGISTER_OFFSET: usize = 0x5F;
     
     // Status and control values
@@ -378,18 +378,7 @@ impl HighLevelProtocol {
             map_info.u_net,
             // eeprom[0x58C],
         );
-        // mapd.c takes the MAP count from `eeprom[0x155]`; this port reads it from the
-        // status answer, where that offset is past the end of the payload. The shared
-        // buffer used to be zeroed before a read, so this has always been 0 here.
-        let maps_count = data
-            .get(InverterConstants::MAPS_COUNT_REGISTER_OFFSET)
-            .copied()
-            .unwrap_or(0);
-        map_info.maps_count = if maps_count == InverterConstants::MAX_BYTE_VALUE {
-            1
-        } else {
-            maps_count
-        };
+        map_info.maps_count = maps_count_from_eeprom(eeprom);
 
         map_info.status_char = data[0x402 - InverterConstants::REGISTER_BASE_ADDRESS];
 
@@ -461,6 +450,17 @@ impl HighLevelProtocol {
         map_info.rs_err_dop = data[0x447 - InverterConstants::REGISTER_BASE_ADDRESS];
 
         Ok(map_info)
+    }
+}
+
+/// The number of parallel MAP units in the installation, as `mapd.c` reads it:
+/// `255` marks a single unit, every other value counts one more than itself.
+fn maps_count_from_eeprom(eeprom: &[u8; 560]) -> u8 {
+    let maps_count = eeprom[InverterConstants::MAPS_COUNT_EEPROM_OFFSET];
+    if maps_count == InverterConstants::MAX_BYTE_VALUE {
+        1
+    } else {
+        maps_count + 1
     }
 }
 
@@ -548,7 +548,23 @@ fn real_mode(
 
 #[cfg(test)]
 mod tests {
-    use super::{real_mode, MapModeExtended};
+    use super::{maps_count_from_eeprom, real_mode, InverterConstants, MapModeExtended};
+
+    fn eeprom_with_maps_count(maps_count: u8) -> [u8; 560] {
+        let mut eeprom = [0u8; 560];
+        eeprom[InverterConstants::MAPS_COUNT_EEPROM_OFFSET] = maps_count;
+        eeprom
+    }
+
+    #[test]
+    fn maps_count_is_the_eeprom_byte_plus_one_except_for_255() {
+        for (raw, expected) in [(255, 1), (2, 3), (0, 1), (1, 2), (254, 255)] {
+            assert_eq!(
+                maps_count_from_eeprom(&eeprom_with_maps_count(raw)),
+                expected
+            );
+        }
+    }
 
     /// `unet` is the decoded network voltage, so 220 V is well over the 100 V
     /// threshold `mapd.c` tests against.
