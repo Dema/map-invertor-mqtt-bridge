@@ -25,9 +25,13 @@ pub struct InverterConstants;
 impl InverterConstants {
     // Register addresses
     pub const MODE_REGISTER_ADDRESS: usize = 0x400;
-    pub const REGISTER_BASE_ADDRESS: usize = 0x3FF;
+    /// First register of the status read, so the payload of the `0x400` read is
+    /// indexed as `register address - REGISTER_BASE_ADDRESS`.
+    pub const REGISTER_BASE_ADDRESS: usize = 0x400;
     pub const U_NET_REGISTER_OFFSET: usize = 0x422;
-    pub const MAPS_COUNT_REGISTER_OFFSET: usize = 0x155;
+    /// Offset inside the status answer, not a register address: mapd.c read it
+    /// from `eeprom[0x155]`, this port reads it from the status answer.
+    pub const MAPS_COUNT_REGISTER_OFFSET: usize = 0x154;
     pub const FLAG_ECO_REGISTER_OFFSET: usize = 0x5F;
     
     // Status and control values
@@ -296,17 +300,13 @@ impl HighLevelProtocol {
     pub fn read_eeprom_to_buffer(&mut self, eeprom: &mut [u8; 560]) -> Result<(), MapError> {
         self.low_level_protocol
             .send_command_clean_buffer(LowLevelCommands::ToRead, 0, 0xFF)?;
-        self.low_level_protocol.read_answer()?;
-
-        eeprom[0..self.low_level_protocol.last_read_bytes_index]
-            .clone_from_slice(self.low_level_protocol.get_actually_read_slice());
+        let answer = self.low_level_protocol.exchange()?;
+        eeprom[0..answer.data.len()].copy_from_slice(&answer.data);
 
         self.low_level_protocol
             .send_command_clean_buffer(LowLevelCommands::ToRead, 0x100, 0xff)?;
-        self.low_level_protocol.read_answer()?;
-
-        eeprom[0x100..(0x100 + self.low_level_protocol.last_read_bytes_index)]
-            .clone_from_slice(self.low_level_protocol.get_actually_read_slice());
+        let answer = self.low_level_protocol.exchange()?;
+        eeprom[0x100..(0x100 + answer.data.len())].copy_from_slice(&answer.data);
         Ok(())
     }
 
@@ -316,30 +316,30 @@ impl HighLevelProtocol {
         self.low_level_protocol
             .send_command_clean_buffer(LowLevelCommands::ToRead, 0x527, 0x5F)?;
 
-        let res = self.low_level_protocol.read_answer();
+        let res = self.low_level_protocol.exchange();
         match res {
-            Ok(_) => {
-                let buffer = self.low_level_protocol.buffer;
-                map_info.flag_eco = buffer[0x5F];
-                map_info.relay1 = buffer[0x60] & 0b01;
-                map_info.relay2 = buffer[0x60] & 0b10;
-                map_info.flag_u_net2 = buffer[1];
+            Ok(answer) => {
+                let data = answer.data;
+                map_info.flag_eco = data[0x5E];
+                map_info.relay1 = data[0x5F] & 0b01;
+                map_info.relay2 = data[0x5F] & 0b10;
+                map_info.flag_u_net2 = data[0];
                 //------------3 phase currents calculation---------------------
-                map_info.i_ph1 = (buffer[2] as f32 + ((buffer[3] & 0x7F) as f32) * 256.0) / 10.0;
-                map_info.i_ph2 = (buffer[4] as f32 + ((buffer[5] & 0x7F) as f32) * 256.0) / 10.0;
-                map_info.i_ph3 = (buffer[6] as f32 + ((buffer[7] & 0x7F) as f32) * 256.0) / 10.0;
+                map_info.i_ph1 = (data[1] as f32 + ((data[2] & 0x7F) as f32) * 256.0) / 10.0;
+                map_info.i_ph2 = (data[3] as f32 + ((data[4] & 0x7F) as f32) * 256.0) / 10.0;
+                map_info.i_ph3 = (data[5] as f32 + ((data[6] & 0x7F) as f32) * 256.0) / 10.0;
 
-                map_info.i_ph1 = if buffer[3] & 0x80 == 0 {
+                map_info.i_ph1 = if data[2] & 0x80 == 0 {
                     map_info.i_ph1
                 } else {
                     0.0 - map_info.i_ph1
                 };
-                map_info.i_ph2 = if buffer[5] & 0x80 == 0 {
+                map_info.i_ph2 = if data[4] & 0x80 == 0 {
                     map_info.i_ph2
                 } else {
                     0.0 - map_info.i_ph2
                 };
-                map_info.i_ph3 = if buffer[7] & 0x80 == 0 {
+                map_info.i_ph3 = if data[6] & 0x80 == 0 {
                     map_info.i_ph3
                 } else {
                     0.0 - map_info.i_ph3
@@ -354,12 +354,16 @@ impl HighLevelProtocol {
         self.low_level_protocol
             .send_command_clean_buffer(LowLevelCommands::ToRead, 0x400, 0xFF)?;
 
-        self.low_level_protocol.read_answer()?;
+        let answer = self.low_level_protocol.exchange()?;
 
-        let buffer = self.low_level_protocol.buffer;
+        // `data` is the payload of the read that starts at register 0x400, with the
+        // status byte mapd.c kept at index 0 stripped: a register sits at
+        // `address - REGISTER_BASE_ADDRESS`, and the bare offsets below are one less
+        // than the raw indices mapd.c used.
+        let data = answer.data;
 
         map_info.mode =
-            MapModeExtended::from_i32(buffer[InverterConstants::MODE_REGISTER_ADDRESS - InverterConstants::REGISTER_BASE_ADDRESS] as i32).expect("MapMode is unknown");
+            MapModeExtended::from_i32(data[InverterConstants::MODE_REGISTER_ADDRESS - InverterConstants::REGISTER_BASE_ADDRESS] as i32).expect("MapMode is unknown");
         map_info.mode = self.real_mode(
             map_info.mode,
             eeprom[0x16B],
@@ -369,99 +373,92 @@ impl HighLevelProtocol {
             map_info.u_net,
             // eeprom[0x58C],
         );
-        map_info.maps_count = if buffer[InverterConstants::MAPS_COUNT_REGISTER_OFFSET] == InverterConstants::MAX_BYTE_VALUE {
+        // mapd.c takes the MAP count from `eeprom[0x155]`; this port reads it from the
+        // status answer, where that offset is past the end of the payload. The shared
+        // buffer used to be zeroed before a read, so this has always been 0 here.
+        let maps_count = data
+            .get(InverterConstants::MAPS_COUNT_REGISTER_OFFSET)
+            .copied()
+            .unwrap_or(0);
+        map_info.maps_count = if maps_count == InverterConstants::MAX_BYTE_VALUE {
             1
         } else {
-            buffer[InverterConstants::MAPS_COUNT_REGISTER_OFFSET]
+            maps_count
         };
 
-        map_info.u_net = buffer[InverterConstants::U_NET_REGISTER_OFFSET - InverterConstants::REGISTER_BASE_ADDRESS] as i32;
+        map_info.u_net = data[InverterConstants::U_NET_REGISTER_OFFSET - InverterConstants::REGISTER_BASE_ADDRESS] as i32;
         if map_info.u_net > 0 {
             map_info.u_net += InverterConstants::VOLTAGE_OFFSET
         }
 
-        map_info.status_char = self.low_level_protocol.buffer[0x402 - InverterConstants::REGISTER_BASE_ADDRESS];
+        map_info.status_char = data[0x402 - InverterConstants::REGISTER_BASE_ADDRESS];
 
-        map_info.u_acc = (self.low_level_protocol.buffer[0x405 - InverterConstants::REGISTER_BASE_ADDRESS] as f32 * InverterConstants::BYTE_MULTIPLIER
-            + self.low_level_protocol.buffer[0x406 - InverterConstants::REGISTER_BASE_ADDRESS] as f32)
+        map_info.u_acc = (data[0x405 - InverterConstants::REGISTER_BASE_ADDRESS] as f32 * InverterConstants::BYTE_MULTIPLIER
+            + data[0x406 - InverterConstants::REGISTER_BASE_ADDRESS] as f32)
             / InverterConstants::CURRENT_DIVISOR;
 
-        map_info.i_acc = self.low_level_protocol.buffer[0x408 - InverterConstants::REGISTER_BASE_ADDRESS] as u32 * InverterConstants::I_ACC_MULTIPLIER;
+        map_info.i_acc = data[0x408 - InverterConstants::REGISTER_BASE_ADDRESS] as u32 * InverterConstants::I_ACC_MULTIPLIER;
 
-        map_info.p_load = self.low_level_protocol.buffer[0x409 - 0x3FF] as u32 * 100;
+        map_info.p_load = data[0x409 - InverterConstants::REGISTER_BASE_ADDRESS] as u32 * 100;
 
-        map_info.f_acc_over = self.low_level_protocol.buffer[0x41C - 0x3FF];
+        map_info.f_acc_over = data[0x41C - InverterConstants::REGISTER_BASE_ADDRESS];
 
-        map_info.f_net_over = self.low_level_protocol.buffer[0x41D - 0x3FF];
+        map_info.f_net_over = data[0x41D - InverterConstants::REGISTER_BASE_ADDRESS];
 
-        map_info.i_net = self.low_level_protocol.buffer[0x423 - 0x3FF];
+        map_info.i_net = data[0x423 - InverterConstants::REGISTER_BASE_ADDRESS];
 
-        map_info.p_net = self.low_level_protocol.buffer[0x424 - 0x3FF] as u32 * 100;
+        map_info.p_net = data[0x424 - InverterConstants::REGISTER_BASE_ADDRESS] as u32 * 100;
 
-        map_info.tf_net = self.low_level_protocol.buffer[0x425 - 0x3FF];
+        map_info.tf_net = data[0x425 - InverterConstants::REGISTER_BASE_ADDRESS];
         // закомментировано в оригинале map_info._TFNET = 6250 / map_info._TFNET;
 
-        map_info.th_f_map = self.low_level_protocol.buffer[0x426 - 0x3FF];
+        map_info.th_f_map = data[0x426 - InverterConstants::REGISTER_BASE_ADDRESS];
         // закомментировано в оригинале map_info._ThFMAP = 6250 / map_info._ThFMAP;
 
-        map_info.u_ou_t_med = self.low_level_protocol.buffer[0x427 - 0x3FF] as u32;
+        map_info.u_ou_t_med = data[0x427 - InverterConstants::REGISTER_BASE_ADDRESS] as u32;
         if map_info.u_ou_t_med > 0 {
             map_info.u_ou_t_med += 100;
         }
 
-        map_info.tf_net_limit = self.low_level_protocol.buffer[0x428 - 0x3FF];
+        map_info.tf_net_limit = data[0x428 - InverterConstants::REGISTER_BASE_ADDRESS];
         // закомментировано в оригинале if (map_info._TFNET_Limit!=0) map_info._TFNET_Limit= 2500 / map_info._TFNET_Limit;
 
-        map_info.u_net_limit = self.low_level_protocol.buffer[0x429 - 0x3FF] as u32;
+        map_info.u_net_limit = data[0x429 - InverterConstants::REGISTER_BASE_ADDRESS] as u32;
         map_info.u_net_limit += 100;
 
-        map_info.rs_err_sis = self.low_level_protocol.buffer[0x42A - 0x3FF];
-        map_info.rs_err_job_m = self.low_level_protocol.buffer[0x42B - 0x3FF];
+        map_info.rs_err_sis = data[0x42A - InverterConstants::REGISTER_BASE_ADDRESS];
+        map_info.rs_err_job_m = data[0x42B - InverterConstants::REGISTER_BASE_ADDRESS];
 
-        map_info.rs_err_job = self.low_level_protocol.buffer[0x42C - 0x3FF];
+        map_info.rs_err_job = data[0x42C - InverterConstants::REGISTER_BASE_ADDRESS];
 
-        map_info.rs_warning = self.low_level_protocol.buffer[0x2E];
+        map_info.rs_warning = data[0x2D];
 
-        map_info.temp_grad0 = self.low_level_protocol.buffer[0x2F] as i8 - 50;
-        map_info.temp_grad1 = self.low_level_protocol.buffer[0x30] as i8 - 50;
+        map_info.temp_grad0 = data[0x2E] as i8 - 50;
+        map_info.temp_grad1 = data[0x2F] as i8 - 50;
 
-        map_info.temp_grad2 = self.low_level_protocol.buffer[0x430 - 0x3FF] as i8 - 50;
+        map_info.temp_grad2 = data[0x430 - InverterConstants::REGISTER_BASE_ADDRESS] as i8 - 50;
 
         if map_info.i_net < 16 {
-            map_info.i_net_16_4 = self.low_level_protocol.buffer[0x32] as f32 / 16.0;
+            map_info.i_net_16_4 = data[0x31] as f32 / 16.0;
         } else {
-            map_info.i_net_16_4 = self.low_level_protocol.buffer[0x32] as f32 / 4.0;
+            map_info.i_net_16_4 = data[0x31] as f32 / 4.0;
         }
 
-        map_info.i_acc_med_a_u16 = self.low_level_protocol.buffer[0x34] as f32 * 16.0
-            + self.low_level_protocol.buffer[0x33] as f32 / 16.0;
+        map_info.i_acc_med_a_u16 = data[0x33] as f32 * 16.0
+            + data[0x32] as f32 / 16.0;
 
-        map_info.temp_off = self.low_level_protocol.buffer[0x43C - 0x3FF];
-        map_info.e_net = self.low_level_protocol.buffer[0x50] as u32 * 65536
-            + self.low_level_protocol.buffer[0x4F] as u32 * 256
-            + self.low_level_protocol.buffer[0x4E] as u32;
-        map_info.e_acc = self.low_level_protocol.buffer[0x53] as u32 * 65536
-            + self.low_level_protocol.buffer[0x52] as u32 * 256
-            + self.low_level_protocol.buffer[0x51] as u32;
-        map_info.e_acc_charge = self.low_level_protocol.buffer[0x56] as u32 * 65536
-            + self.low_level_protocol.buffer[0x55] as u32 * 256
-            + self.low_level_protocol.buffer[0x54] as u32;
-        map_info.i2_c_err = self.low_level_protocol.buffer[0x45A - 0x3FF];
-        map_info.rs_err_dop = self.low_level_protocol.buffer[0x447 - 0x3FF];
-
-        // //---------------------------Checking EEPROM change-------------------------
-
-        // if (self.low_level_protocol.buffer[0x04] & 5 > 0) {
-        //     if (self.read_eeprom_to_buffer(eeprom, fd, mysql) == 0) {
-        //         self.low_level_protocol.buffer[0] = 3;
-        //         send_command(to_write, fd, 0x0, 0x0);
-        //         if (read_answer(fd) == 0) {
-        //             self.low_level_protocol.buffer[0] = 0;
-        //             send_command(to_write, fd, 0x403, 0x0);
-        //             read_answer(fd);
-        //         }
-        //     }
-        // }
+        map_info.temp_off = data[0x43C - InverterConstants::REGISTER_BASE_ADDRESS];
+        map_info.e_net = data[0x4F] as u32 * 65536
+            + data[0x4E] as u32 * 256
+            + data[0x4D] as u32;
+        map_info.e_acc = data[0x52] as u32 * 65536
+            + data[0x51] as u32 * 256
+            + data[0x50] as u32;
+        map_info.e_acc_charge = data[0x55] as u32 * 65536
+            + data[0x54] as u32 * 256
+            + data[0x53] as u32;
+        map_info.i2_c_err = data[0x45A - InverterConstants::REGISTER_BASE_ADDRESS];
+        map_info.rs_err_dop = data[0x447 - InverterConstants::REGISTER_BASE_ADDRESS];
 
         Ok(map_info)
     }

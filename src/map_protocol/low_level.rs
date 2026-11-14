@@ -28,12 +28,23 @@ impl Display for LowLevelCommands {
         }
     }
 }
+/// One decoded answer from the inverter.
+///
+/// `data` is the payload alone: the `0x6f` status byte, the checksum, the
+/// `0x0a` terminator and every `0xdb` escape sequence have been removed, so
+/// `data.len()` is the decoded payload length.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Answer {
+    pub data: Vec<u8>,
+}
+
 #[derive(Debug)]
 pub struct LowLevelProtocol {
     port: Box<dyn SerialPort>,
     sum: u8,
-    pub buffer: [u8; BUFFER_SIZE as usize],
-    pub last_read_bytes_index: usize,
+    /// Scratch space for one response: status byte, escaped payload, checksum,
+    /// terminator. Never leaves this type.
+    buffer: [u8; BUFFER_SIZE as usize],
 }
 impl LowLevelProtocol {
     pub fn new(port: Box<dyn SerialPort>) -> Self {
@@ -41,17 +52,11 @@ impl LowLevelProtocol {
             port,
             sum: 0,
             buffer: [0; BUFFER_SIZE as usize],
-            last_read_bytes_index: 0,
         }
     }
 
-    pub fn clear_buffer(&mut self) {
+    fn clear_buffer(&mut self) {
         self.buffer.fill(0);
-        self.last_read_bytes_index = 0;
-    }
-
-    pub fn get_actually_read_slice(&self) -> &[u8] {
-        &self.buffer[1..=self.last_read_bytes_index]
     }
 
     fn put_char(&mut self, c: u8) -> Result<(), MapError> {
@@ -142,9 +147,20 @@ impl LowLevelProtocol {
         Ok(())
     }
 
-    pub fn read_answer(&mut self) -> Result<(), MapError> {
-        self.port
-            .read_exact(&mut self.buffer[0..=0])?;
+    /// Performs the byte-echo handshake that reads one answer and returns its
+    /// decoded payload.
+    ///
+    /// The inverter echoes every byte it sends, so each received byte is written
+    /// back before the next one is read. The raw response is `0x6f` (status),
+    /// payload, checksum and `0x0a` terminator, with `0x0a` and `0xdb` bytes
+    /// escaped as `0xdb 0xdc` / `0xdb 0xdd`; this validates the checksum over the
+    /// escaped bytes and unescapes the payload.
+    pub fn exchange(&mut self) -> Result<Answer, MapError> {
+        // Unescaping happens in place and looks one byte past the last payload
+        // byte, so the tail of the buffer has to stay zeroed.
+        self.buffer.fill(0);
+
+        self.port.read_exact(&mut self.buffer[0..=0])?;
 
         let mut idx: usize = 0;
 
@@ -194,36 +210,40 @@ impl LowLevelProtocol {
                 value: sum_r,
             });
         }
-        self.last_read_bytes_index = idx;
-        self.decode_answer();
+        let last_read_byte = self.decode_answer(idx);
 
-        Ok(())
+        // Not payload: the checksum sits just before the terminator, and when the
+        // checksum is itself `0x0a` it is the byte the read loop stopped on and no
+        // separate terminator was sent. Either way the framing stays in `buffer`.
+        let framing_bytes = if sum_r == 0x0a { 1 } else { 2 };
+        let data_len = last_read_byte.saturating_sub(framing_bytes);
+
+        Ok(Answer {
+            data: self.buffer[1..1 + data_len].to_vec(),
+        })
     }
 
-    fn decode_answer(&mut self) {
+    /// Unescapes `buffer[1..=last]` in place and returns the index of the last
+    /// byte the read put there after every `0xdb` escape pair has been collapsed.
+    fn decode_answer(&mut self, mut last: usize) -> usize {
         let mut idx = 1;
 
-        while idx <= self.last_read_bytes_index {
-            {
-                if self.buffer[idx] == 0xDB && self.buffer[idx + 1] == 0xDC {
-                    self.buffer[idx] = 0x0A;
-                    self.last_read_bytes_index -= 1;
-                    // if idx + 2 <= self.last_read_bytes_index {
-                    //     self.buffer.copy_within((idx + 2)..=self.last_read_bytes_index , idx + 1);
-                    // }
-                    for i in idx..self.last_read_bytes_index - 1 {
-                        self.buffer[i + 1] = self.buffer[i + 2];
-                    }
-                } else if self.buffer[idx] == 0xDB && self.buffer[idx + 1] == 0xDD {
-                    self.buffer[idx] = 0xDB;
-
-                    self.last_read_bytes_index -= 1;
-                    for i in idx..self.last_read_bytes_index - 1 {
-                        self.buffer[i + 1] = self.buffer[i + 2];
-                    }
+        while idx <= last {
+            if self.buffer[idx] == 0xDB && self.buffer[idx + 1] == 0xDC {
+                self.buffer[idx] = 0x0A;
+                last -= 1;
+                for i in idx..last - 1 {
+                    self.buffer[i + 1] = self.buffer[i + 2];
                 }
-                idx += 1;
+            } else if self.buffer[idx] == 0xDB && self.buffer[idx + 1] == 0xDD {
+                self.buffer[idx] = 0xDB;
+                last -= 1;
+                for i in idx..last - 1 {
+                    self.buffer[i + 1] = self.buffer[i + 2];
+                }
             }
+            idx += 1;
         }
+        last
     }
 }
