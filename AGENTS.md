@@ -53,3 +53,17 @@ The application has two main modes:
 2.  **Stdout Mode:** Reads the inverter's status once and prints it to the console, either in a human-readable format or as a JSON object.
 
 The application also supports generating shell command-line completion scripts.
+
+## Agent skills
+
+### Issue tracker
+
+Issues and specs live as GitHub issues in `Dema/map-invertor-mqtt-bridge` (via the `gh` CLI). See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+The default five canonical triage roles: `needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, `wontfix`. See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context: `GLOSSARY.md` and `docs/adr/` at the repo root. See `docs/agents/domain.md`.
