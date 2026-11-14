@@ -1,0 +1,17 @@
+#!/bin/sh
+# Committed in .githooks so the check travels with the clone.
+# Activate once per clone with: git config core.hooksPath .githooks
+set -e
+
+command -v cargo >/dev/null 2>&1 || exit 0
+
+cargo fmt --check
+
+# Silent on success: a commit should not print build warnings nobody asked for.
+out=$(mktemp)
+if ! cargo test --quiet >"$out" 2>&1; then
+    cat "$out"
+    rm -f "$out"
+    exit 1
+fi
+rm -f "$out"

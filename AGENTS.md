@@ -54,6 +54,12 @@ The application has two main modes:
 
 The application also supports generating shell command-line completion scripts.
 
+## Conventions
+
+**Checks:** run `git config core.hooksPath .githooks` once per clone. The pre-commit hook in `.githooks/pre-commit` runs `cargo fmt --check` and `cargo test`.
+
+**Commits:** `<type>: <summary>` with one of `fix:`, `refactor:`, `feat:`, `docs:`, `style:`, `chore:`; the body says why, and the last line names the ticket (`Refs #12`).
+
 ## Agent skills
 
 ### Issue tracker
