@@ -29,11 +29,18 @@ The project is configured for cross-compilation, as indicated by `Cross.toml` an
 
 The core logic is organized into modules:
 
-- **`src/main.rs`**: The main entry point of the application. It handles:
-    - Parsing command-line arguments to determine the operating mode.
-    - Initializing the serial port connection.
-    - Setting up the MQTT client.
-    - Orchestrating the main application loop.
+- **`src/main.rs`**: Composition only. It parses the command line, dumps one status to stdout, and runs the MQTT bridge with its single retry policy: an attempt keeps the device session and the broker connection alive independently, and only the end that failed is rebuilt after `--reconnect-every`.
+
+- **`src/cli.rs`**: The argument surface — working mode, serial and MQTT parameters, shell completions.
+
+- **`src/session.rs`**: The device side, with no MQTT in sight.
+    - **`InverterDevice`**: The seam — `read_eeprom` and `read_status`. `SerialDevice` is the production adapter; a scripted device stands in during tests.
+    - **`PollingSession`**: Owns the EEPROM read once per session, then polls statuses from the same device.
+    - **`Watchdog`**: Trips when the status stays the same for more than `MAX_CONSECUTIVE_SAME_READS` reads, turning a hung inverter into a session error.
+
+- **`src/bridge.rs`**: The publish-on-change rule and the `StatusSink` seam (`publish(&MapInfo)`, MQTT in production, a recorder in tests). `BridgeError::failed_end` says which side of the bridge has to be rebuilt.
+
+- **`src/mqtt_sink.rs`**: `MqttSink`, the production `StatusSink`: the status as retained JSON on one topic, at QoS 1.
 
 - **`src/map_protocol/`**: This module encapsulates the logic for communicating with the MAP inverter.
     - **`low_level.rs`**: Implements the fundamental communication protocol. It is responsible for:
@@ -44,6 +51,7 @@ The core logic is organized into modules:
         - Read the inverter's configuration from its EEPROM.
         - Fetch and parse the real-time status of the inverter.
         - Convert the raw data into a structured `MapInfo` object.
+        - Check that an EEPROM read came from a MAP at all (`ensure_map_present`, the one home of the `eeprom[0] == 3` magic byte).
 
 ## How to Use
 

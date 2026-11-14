@@ -50,7 +50,7 @@ impl InverterConstants {
     pub const HIGH_CURRENT_DIVISOR: f32 = 4.0;
 }
 
-#[derive(Default, Debug, Serialize, PartialEq)]
+#[derive(Clone, Default, Debug, Serialize, PartialEq)]
 pub struct MapInfo {
     mode: MapModeExtended,
     status_char: u8,
@@ -94,6 +94,34 @@ pub struct MapInfo {
     i_ph3: f32,
     i_acc_3ph: f32,
     maps_count: u8,
+}
+
+/// `eeprom[0]` is `3` on a MAP that answers at all, which is what `mapd.c`
+/// calls "MAP found".
+pub const MAP_PRESENT_MAGIC: u8 = 3;
+
+/// Refuses an EEPROM read that did not come from a MAP.
+///
+/// Both working modes ask the same question about the same byte, so the answer,
+/// and the byte itself, live here once.
+pub fn ensure_map_present(eeprom: &[u8; 560]) -> Result<(), MapError> {
+    if eeprom[0] == MAP_PRESENT_MAGIC {
+        Ok(())
+    } else {
+        Err(MapError::NotFound)
+    }
+}
+
+#[cfg(test)]
+impl MapInfo {
+    /// A status that differs from [`MapInfo::default`] only in `status_char`,
+    /// so a test can tell two polls apart without a device to ask.
+    pub(crate) fn for_test(status_char: u8) -> Self {
+        Self {
+            status_char,
+            ..Self::default()
+        }
+    }
 }
 
 impl MapInfo {
@@ -549,7 +577,35 @@ fn real_mode(
 
 #[cfg(test)]
 mod tests {
-    use super::{maps_count_from_eeprom, real_mode, InverterConstants, MapModeExtended};
+    use super::{
+        ensure_map_present, maps_count_from_eeprom, real_mode, InverterConstants, MapModeExtended,
+        MAP_PRESENT_MAGIC,
+    };
+    use crate::map_protocol::MapError;
+
+    #[test]
+    fn the_map_magic_byte_is_the_only_answer_that_counts_as_a_map() {
+        let mut eeprom = [0u8; 560];
+
+        assert!(matches!(
+            ensure_map_present(&eeprom),
+            Err(MapError::NotFound)
+        ));
+
+        eeprom[0] = MAP_PRESENT_MAGIC;
+        assert!(ensure_map_present(&eeprom).is_ok());
+
+        for not_the_magic in 0..=u8::MAX {
+            if not_the_magic == MAP_PRESENT_MAGIC {
+                continue;
+            }
+            eeprom[0] = not_the_magic;
+            assert!(
+                ensure_map_present(&eeprom).is_err(),
+                "{not_the_magic:#04x} is not a MAP"
+            );
+        }
+    }
 
     fn eeprom_with_maps_count(maps_count: u8) -> [u8; 560] {
         let mut eeprom = [0u8; 560];
