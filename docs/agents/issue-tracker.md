@@ -14,6 +14,11 @@ Issues and specs for this repo live as GitHub issues in **`Dema/map-invertor-mqt
 - **Apply / remove labels**: `gh issue edit <number> --add-label "..."` / `--remove-label "..."`
 - **Close**: post the explanation with `gh issue comment <number> --body "..."`, then `gh issue close <number>`. On an already-closed issue, `gh issue close --comment` drops the comment and still exits 0.
 
+## Ticket hygiene
+
+- **Cite symbols, not line numbers.** A body that says `high_level.rs:363` is wrong after the first refactor; name the function, constant or field so the reader can locate it.
+- **Refresh what a landed change invalidates.** When work makes a ticket's evidence false — a renamed constant, a corrected offset, a block that moved — update that ticket in the same batch. A stale spec costs the next agent more than the fix did, and finding out means re-reading the body before every dispatch.
+
 Infer the repo from `git remote -v`; `gh` does this automatically when run inside a clone.
 
 File issues only into the user's own repo. Never file into `mattpocock/skills` (the repo these skills come from) unless the user owns it. In a fork, `gh` can default to the upstream parent, so before the first `gh issue create` of a session, check the target with `gh repo view --json nameWithOwner` and confirm it with the user if it is not their repo.
