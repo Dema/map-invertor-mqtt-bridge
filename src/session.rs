@@ -182,12 +182,12 @@ pub(crate) mod scripted {
 
     use super::InverterDevice;
 
-    /// A device that hands out scripted statuses in order and remembers how
-    /// often it was asked for the EEPROM.
+    /// A device whose answers and failures are scripted in order, and which
+    /// remembers how often it was asked for the EEPROM.
     #[derive(Debug)]
     pub(crate) struct ScriptedDevice {
         eeprom: [u8; 560],
-        statuses: VecDeque<MapInfo>,
+        answers: VecDeque<Result<MapInfo, MapError>>,
         pub(crate) eeprom_reads: usize,
         pub(crate) status_reads: usize,
     }
@@ -195,11 +195,16 @@ pub(crate) mod scripted {
     impl ScriptedDevice {
         /// A MAP that answers with `statuses`, in that order.
         pub(crate) fn map(statuses: Vec<MapInfo>) -> Self {
+            Self::scripted(statuses.into_iter().map(Ok).collect())
+        }
+
+        /// A MAP whose answers and read failures are scripted in order.
+        pub(crate) fn scripted(answers: Vec<Result<MapInfo, MapError>>) -> Self {
             let mut eeprom = [0u8; 560];
             eeprom[0] = MAP_PRESENT_MAGIC;
             Self {
                 eeprom,
-                statuses: statuses.into(),
+                answers: answers.into(),
                 eeprom_reads: 0,
                 status_reads: 0,
             }
@@ -209,7 +214,7 @@ pub(crate) mod scripted {
         pub(crate) fn not_a_map() -> Self {
             Self {
                 eeprom: [0u8; 560],
-                statuses: VecDeque::new(),
+                answers: VecDeque::new(),
                 eeprom_reads: 0,
                 status_reads: 0,
             }
@@ -224,10 +229,9 @@ pub(crate) mod scripted {
 
         fn read_status(&mut self, _eeprom: &[u8; 560]) -> Result<MapInfo, MapError> {
             self.status_reads += 1;
-            Ok(self
-                .statuses
+            self.answers
                 .pop_front()
-                .expect("the script ran out of statuses"))
+                .expect("the script ran out of statuses")
         }
     }
 }

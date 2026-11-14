@@ -60,6 +60,12 @@ impl StatusSink for MqttSink {
         self.client.publish(status_message(&self.topic, status)?)?;
         Ok(())
     }
+
+    /// A client that lost the broker is asked to publish anyway, so the failure
+    /// is noticed even while the status is not changing.
+    fn is_connected(&mut self) -> bool {
+        self.client.is_connected()
+    }
 }
 
 /// The one MQTT message a status becomes.

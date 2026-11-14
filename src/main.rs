@@ -8,7 +8,7 @@ use std::{thread, time::Duration};
 
 use log::warn;
 
-use bridge::{Bridge, BridgeError, End};
+use bridge::Links;
 use cli::{MqttParams, SerialParams, WorkingMode};
 use map_protocol::high_level::ensure_map_present;
 use mqtt_sink::MqttSink;
@@ -61,10 +61,19 @@ fn dump_status_once(serial_params: &SerialParams, json_output: bool) -> anyhow::
 fn run_mqtt(params: &MqttParams) -> anyhow::Result<()> {
     let interval = Duration::from(&params.interval);
     let reconnect_every = params.reconnect_every.as_ref().map(Duration::from);
-    let mut links = Links::new(params, interval);
+    let mut links = Links::new();
 
     loop {
-        match links.poll_once() {
+        match links.poll_once(
+            || {
+                let device = SerialDevice::open(
+                    &params.serial_params.map_port,
+                    params.serial_params.map_port_speed,
+                )?;
+                PollingSession::start(device, Watchdog::new(interval))
+            },
+            || MqttSink::connect(params),
+        ) {
             Ok(()) => thread::sleep(interval),
             Err(error) => {
                 let Some(reconnect_every) = reconnect_every else {
@@ -74,52 +83,6 @@ fn run_mqtt(params: &MqttParams) -> anyhow::Result<()> {
                 thread::sleep(reconnect_every);
                 links.discard(error.failed_end());
             }
-        }
-    }
-}
-
-/// The two ends of the bridge, each kept until it fails.
-struct Links<'a> {
-    params: &'a MqttParams,
-    interval: Duration,
-    session: Option<PollingSession<SerialDevice>>,
-    bridge: Option<Bridge<MqttSink>>,
-}
-
-impl<'a> Links<'a> {
-    fn new(params: &'a MqttParams, interval: Duration) -> Self {
-        Self {
-            params,
-            interval,
-            session: None,
-            bridge: None,
-        }
-    }
-
-    /// Opens whichever end is missing and polls once.
-    fn poll_once(&mut self) -> Result<(), BridgeError> {
-        if self.session.is_none() {
-            let device = SerialDevice::open(
-                &self.params.serial_params.map_port,
-                self.params.serial_params.map_port_speed,
-            )?;
-            self.session = Some(PollingSession::start(device, Watchdog::new(self.interval))?);
-        }
-        if self.bridge.is_none() {
-            let sink = MqttSink::connect(self.params).map_err(BridgeError::Sink)?;
-            self.bridge = Some(Bridge::new(sink));
-        }
-
-        let session = self.session.as_mut().expect("just opened");
-        let bridge = self.bridge.as_mut().expect("just connected");
-        bridge.poll_once(session)
-    }
-
-    /// Forgets the end that failed, so the next poll rebuilds it.
-    fn discard(&mut self, end: End) {
-        match end {
-            End::Device => self.session = None,
-            End::Sink => self.bridge = None,
         }
     }
 }

@@ -29,7 +29,7 @@ The project is configured for cross-compilation, as indicated by `Cross.toml` an
 
 The core logic is organized into modules:
 
-- **`src/main.rs`**: Composition only. It parses the command line, dumps one status to stdout, and runs the MQTT bridge with its single retry policy: an attempt keeps the device session and the broker connection alive independently, and only the end that failed is rebuilt after `--reconnect-every`.
+- **`src/main.rs`**: Composition only. It parses the command line, dumps one status to stdout, and drives `bridge::Links` with the factories that open the real device and broker. The retry delay (`--reconnect-every`) and the warning live here; which end gets rebuilt lives in `Links`.
 
 - **`src/cli.rs`**: The argument surface — working mode, serial and MQTT parameters, shell completions.
 
@@ -38,7 +38,7 @@ The core logic is organized into modules:
     - **`PollingSession`**: Owns the EEPROM read once per session, then polls statuses from the same device.
     - **`Watchdog`**: Trips when the status stays the same for more than `MAX_CONSECUTIVE_SAME_READS` reads, turning a hung inverter into a session error.
 
-- **`src/bridge.rs`**: The publish-on-change rule and the `StatusSink` seam (`publish(&MapInfo)`, MQTT in production, a recorder in tests). `BridgeError::failed_end` says which side of the bridge has to be rebuilt.
+- **`src/bridge.rs`**: The publish-on-change rule, the `StatusSink` seam (`publish(&MapInfo)` and `is_connected()`, MQTT in production, a scripted sink in tests), and `Links`, the state machine behind the single retry policy: it keeps the session and the sink alive independently and drops only the end that failed. `BridgeError::failed_end` says which end that is.
 
 - **`src/mqtt_sink.rs`**: `MqttSink`, the production `StatusSink`: the status as retained JSON on one topic, at QoS 1.
 
