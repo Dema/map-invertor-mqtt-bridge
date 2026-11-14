@@ -362,9 +362,14 @@ impl HighLevelProtocol {
         // than the raw indices mapd.c used.
         let data = answer.data;
 
+        map_info.u_net = data[InverterConstants::U_NET_REGISTER_OFFSET - InverterConstants::REGISTER_BASE_ADDRESS] as i32;
+        if map_info.u_net > 0 {
+            map_info.u_net += InverterConstants::VOLTAGE_OFFSET
+        }
+
         map_info.mode =
             MapModeExtended::from_i32(data[InverterConstants::MODE_REGISTER_ADDRESS - InverterConstants::REGISTER_BASE_ADDRESS] as i32).expect("MapMode is unknown");
-        map_info.mode = self.real_mode(
+        map_info.mode = real_mode(
             map_info.mode,
             eeprom[0x16B],
             map_info.flag_eco,
@@ -385,11 +390,6 @@ impl HighLevelProtocol {
         } else {
             maps_count
         };
-
-        map_info.u_net = data[InverterConstants::U_NET_REGISTER_OFFSET - InverterConstants::REGISTER_BASE_ADDRESS] as i32;
-        if map_info.u_net > 0 {
-            map_info.u_net += InverterConstants::VOLTAGE_OFFSET
-        }
 
         map_info.status_char = data[0x402 - InverterConstants::REGISTER_BASE_ADDRESS];
 
@@ -462,81 +462,78 @@ impl HighLevelProtocol {
 
         Ok(map_info)
     }
+}
 
-    fn real_mode(
-        &self,
-        mode: MapModeExtended,
-        net_alg: u8,
-        flag_eco: u8,
-        net_up_eco: u8,
-        _net_up_load: u8,
-        unet: i32,
-        // Pmax_On: u8,
-    ) -> MapModeExtended {
-        if matches!(
-            mode,
-            MapModeExtended::PowerOnGeneratingNoExternalPower
-                | MapModeExtended::PowerOnTranslatingExternalPower
-        ) {
-            // Process these specific modes
-        } else {
-            return mode;
-        }
+fn real_mode(
+    mode: MapModeExtended,
+    net_alg: u8,
+    flag_eco: u8,
+    net_up_eco: u8,
+    _net_up_load: u8,
+    unet: i32,
+    // Pmax_On: u8,
+) -> MapModeExtended {
+    if matches!(
+        mode,
+        MapModeExtended::PowerOnGeneratingNoExternalPower
+            | MapModeExtended::PowerOnTranslatingExternalPower
+    ) {
+        // Process these specific modes
+    } else {
+        return mode;
+    }
 
-        if net_up_eco == 0 {
-            // ECO forced gen or Tarifs
-            // if NetUpLoad == 1 && (Pmax_On & 2 > 0) && (UNET > 100) {
-            //     return MapModeExtended::Pmax;
-            // }
-            if mode == MapModeExtended::PowerOnGeneratingNoExternalPower {
-                if unet > 100 {
-                    if net_alg == 2 {
-                        return MapModeExtended::ForcedGeneration;
-                    } else if net_alg == 3 {
-                        if (flag_eco & 2) == 0 {
-                            return MapModeExtended::SellingBackToGridMaxRateForcedGeneration;
-                        } else {
-                            return MapModeExtended::SellingBackToGridMinRate;
-                        }
-                    }
-                }
-                MapModeExtended::PowerOnGeneratingNoExternalPower
-            } else {
-                mode
-            }
-        } else if net_up_eco == 1 {
-            // Eco pumping
-
-            if mode == MapModeExtended::PowerOnTranslatingExternalPower {
+    if net_up_eco == 0 {
+        // ECO forced gen or Tarifs
+        // if NetUpLoad == 1 && (Pmax_On & 2 > 0) && (UNET > 100) {
+        //     return MapModeExtended::Pmax;
+        // }
+        if mode == MapModeExtended::PowerOnGeneratingNoExternalPower {
+            if unet > 100 {
                 if net_alg == 2 {
-                    return match (flag_eco & 1).cmp(&0u8) {
-                        Ordering::Greater => MapModeExtended::WaitingForExternalCharge,
-                        Ordering::Equal => MapModeExtended::TranslationECOPumping,
-                        Ordering::Less => mode,
-                    };
+                    return MapModeExtended::ForcedGeneration;
                 } else if net_alg == 3 {
-                    return match (flag_eco & 2).cmp(&0u8) {
-                        Ordering::Greater => MapModeExtended::SellingBackToGridMinRate,
-                        Ordering::Equal => MapModeExtended::SellingBackToGridTranslationEcoPumping,
-                        Ordering::Less => mode,
-                    };
-                } else {
-                    return mode;
+                    if (flag_eco & 2) == 0 {
+                        return MapModeExtended::SellingBackToGridMaxRateForcedGeneration;
+                    } else {
+                        return MapModeExtended::SellingBackToGridMinRate;
+                    }
                 }
+            }
+            MapModeExtended::PowerOnGeneratingNoExternalPower
+        } else {
+            mode
+        }
+    } else if net_up_eco == 1 {
+        // Eco pumping
+
+        if mode == MapModeExtended::PowerOnTranslatingExternalPower {
+            if net_alg == 2 {
+                return match (flag_eco & 1).cmp(&0u8) {
+                    Ordering::Greater => MapModeExtended::WaitingForExternalCharge,
+                    Ordering::Equal => MapModeExtended::TranslationECOPumping,
+                    Ordering::Less => mode,
+                };
+            } else if net_alg == 3 {
+                return match (flag_eco & 2).cmp(&0u8) {
+                    Ordering::Greater => MapModeExtended::SellingBackToGridMinRate,
+                    Ordering::Equal => MapModeExtended::SellingBackToGridTranslationEcoPumping,
+                    Ordering::Less => mode,
+                };
             } else {
                 return mode;
             }
-        } else if net_up_eco == 2 {
-            // Sell to network
-            if mode == MapModeExtended::PowerOnTranslatingExternalPower {
-                if net_alg == 2 {
-                    if flag_eco & 1 > 0 {
-                        return MapModeExtended::WaitingForExternalCharge;
-                    } else {
-                        return MapModeExtended::TranslationSellingBackToGrid;
-                    }
+        } else {
+            return mode;
+        }
+    } else if net_up_eco == 2 {
+        // Sell to network
+        if mode == MapModeExtended::PowerOnTranslatingExternalPower {
+            if net_alg == 2 {
+                if flag_eco & 1 > 0 {
+                    return MapModeExtended::WaitingForExternalCharge;
                 } else {
-                    return mode;
+                    return MapModeExtended::TranslationSellingBackToGrid;
                 }
             } else {
                 return mode;
@@ -544,6 +541,176 @@ impl HighLevelProtocol {
         } else {
             return mode;
         }
+    } else {
+        return mode;
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::{real_mode, MapModeExtended};
+
+    /// `unet` is the decoded network voltage, so 220 V is well over the 100 V
+    /// threshold `mapd.c` tests against.
+    const ABOVE_THRESHOLD: i32 = 220;
+    const AT_THRESHOLD: i32 = 100;
+    const NO_NETWORK: i32 = 0;
+
+    #[test]
+    fn forced_generation_needs_network_voltage_and_the_forced_tariff() {
+        assert_eq!(
+            real_mode(
+                MapModeExtended::PowerOnGeneratingNoExternalPower,
+                2,
+                0,
+                0,
+                0,
+                ABOVE_THRESHOLD
+            ),
+            MapModeExtended::ForcedGeneration
+        );
+    }
+
+    #[test]
+    fn high_tariff_mode_depends_on_the_eco_flag() {
+        // `net_alg == 3` with the high tariff bit clear is the max-rate state.
+        assert_eq!(
+            real_mode(
+                MapModeExtended::PowerOnGeneratingNoExternalPower,
+                3,
+                0,
+                0,
+                0,
+                ABOVE_THRESHOLD
+            ),
+            MapModeExtended::SellingBackToGridMaxRateForcedGeneration
+        );
+        // With bit 1 of `flag_eco` set the inverter is in the min-rate state.
+        assert_eq!(
+            real_mode(
+                MapModeExtended::PowerOnGeneratingNoExternalPower,
+                3,
+                2,
+                0,
+                0,
+                ABOVE_THRESHOLD
+            ),
+            MapModeExtended::SellingBackToGridMinRate
+        );
+    }
+
+    #[test]
+    fn forced_generation_stays_off_without_network_voltage() {
+        for unet in [NO_NETWORK, AT_THRESHOLD] {
+            assert_eq!(
+                real_mode(
+                    MapModeExtended::PowerOnGeneratingNoExternalPower,
+                    2,
+                    0,
+                    0,
+                    0,
+                    unet
+                ),
+                MapModeExtended::PowerOnGeneratingNoExternalPower
+            );
+            assert_eq!(
+                real_mode(
+                    MapModeExtended::PowerOnGeneratingNoExternalPower,
+                    3,
+                    0,
+                    0,
+                    0,
+                    unet
+                ),
+                MapModeExtended::PowerOnGeneratingNoExternalPower
+            );
+        }
+    }
+
+    #[test]
+    fn eco_pumping_follows_net_alg_and_flag_eco() {
+        assert_eq!(
+            real_mode(
+                MapModeExtended::PowerOnTranslatingExternalPower,
+                2,
+                1,
+                1,
+                0,
+                ABOVE_THRESHOLD
+            ),
+            MapModeExtended::WaitingForExternalCharge
+        );
+        assert_eq!(
+            real_mode(
+                MapModeExtended::PowerOnTranslatingExternalPower,
+                2,
+                0,
+                1,
+                0,
+                ABOVE_THRESHOLD
+            ),
+            MapModeExtended::TranslationECOPumping
+        );
+        assert_eq!(
+            real_mode(
+                MapModeExtended::PowerOnTranslatingExternalPower,
+                3,
+                0,
+                1,
+                0,
+                ABOVE_THRESHOLD
+            ),
+            MapModeExtended::SellingBackToGridTranslationEcoPumping
+        );
+    }
+
+    #[test]
+    fn selling_to_the_grid_follows_net_alg_and_flag_eco() {
+        assert_eq!(
+            real_mode(
+                MapModeExtended::PowerOnTranslatingExternalPower,
+                2,
+                1,
+                2,
+                0,
+                ABOVE_THRESHOLD
+            ),
+            MapModeExtended::WaitingForExternalCharge
+        );
+        assert_eq!(
+            real_mode(
+                MapModeExtended::PowerOnTranslatingExternalPower,
+                2,
+                0,
+                2,
+                0,
+                ABOVE_THRESHOLD
+            ),
+            MapModeExtended::TranslationSellingBackToGrid
+        );
+    }
+
+    /// Modes outside the two the extension rules look at are handed back as they
+    /// came, whatever the ECO and tariff settings say.
+    #[test]
+    fn other_modes_pass_through_untouched() {
+        let others = [
+            MapModeExtended::PowerOff,
+            MapModeExtended::PowerOffExternalPowerPresent,
+            MapModeExtended::PowerOnTranslatingExternalPowerAndCharging,
+            MapModeExtended::Pmax,
+        ];
+        for mode in others {
+            for net_up_eco in [0, 1, 2, 3] {
+                assert_eq!(
+                    real_mode(mode, 2, 0, net_up_eco, 0, ABOVE_THRESHOLD),
+                    mode
+                );
+                assert_eq!(
+                    real_mode(mode, 3, 2, net_up_eco, 0, ABOVE_THRESHOLD),
+                    mode
+                );
+            }
+        }
+    }
+}
