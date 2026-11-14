@@ -33,11 +33,11 @@ impl InverterConstants {
     /// takes the number of parallel MAP units from `eeprom[0x155]`.
     pub const MAPS_COUNT_EEPROM_OFFSET: usize = 0x155;
     pub const FLAG_ECO_REGISTER_OFFSET: usize = 0x5F;
-    
+
     // Status and control values
     pub const MAX_BYTE_VALUE: u8 = 0xFF;
     pub const FLAG_ECO_ERROR_VALUE: u8 = 255;
-    
+
     // Calculation factors
     pub const VOLTAGE_OFFSET: i32 = 100;
     pub const CURRENT_DIVISOR: f32 = 10.0;
@@ -362,13 +362,18 @@ impl HighLevelProtocol {
         // than the raw indices mapd.c used.
         let data = answer.data;
 
-        map_info.u_net = data[InverterConstants::U_NET_REGISTER_OFFSET - InverterConstants::REGISTER_BASE_ADDRESS] as i32;
+        map_info.u_net = data
+            [InverterConstants::U_NET_REGISTER_OFFSET - InverterConstants::REGISTER_BASE_ADDRESS]
+            as i32;
         if map_info.u_net > 0 {
             map_info.u_net += InverterConstants::VOLTAGE_OFFSET
         }
 
-        map_info.mode =
-            MapModeExtended::from_i32(data[InverterConstants::MODE_REGISTER_ADDRESS - InverterConstants::REGISTER_BASE_ADDRESS] as i32).expect("MapMode is unknown");
+        map_info.mode = MapModeExtended::from_i32(
+            data[InverterConstants::MODE_REGISTER_ADDRESS
+                - InverterConstants::REGISTER_BASE_ADDRESS] as i32,
+        )
+        .expect("MapMode is unknown");
         map_info.mode = real_mode(
             map_info.mode,
             eeprom[0x16B],
@@ -382,11 +387,13 @@ impl HighLevelProtocol {
 
         map_info.status_char = data[0x402 - InverterConstants::REGISTER_BASE_ADDRESS];
 
-        map_info.u_acc = (data[0x405 - InverterConstants::REGISTER_BASE_ADDRESS] as f32 * InverterConstants::BYTE_MULTIPLIER
+        map_info.u_acc = (data[0x405 - InverterConstants::REGISTER_BASE_ADDRESS] as f32
+            * InverterConstants::BYTE_MULTIPLIER
             + data[0x406 - InverterConstants::REGISTER_BASE_ADDRESS] as f32)
             / InverterConstants::CURRENT_DIVISOR;
 
-        map_info.i_acc = data[0x408 - InverterConstants::REGISTER_BASE_ADDRESS] as u32 * InverterConstants::I_ACC_MULTIPLIER;
+        map_info.i_acc = data[0x408 - InverterConstants::REGISTER_BASE_ADDRESS] as u32
+            * InverterConstants::I_ACC_MULTIPLIER;
 
         map_info.p_load = data[0x409 - InverterConstants::REGISTER_BASE_ADDRESS] as u32 * 100;
 
@@ -433,19 +440,13 @@ impl HighLevelProtocol {
             map_info.i_net_16_4 = data[0x31] as f32 / 4.0;
         }
 
-        map_info.i_acc_med_a_u16 = data[0x33] as f32 * 16.0
-            + data[0x32] as f32 / 16.0;
+        map_info.i_acc_med_a_u16 = data[0x33] as f32 * 16.0 + data[0x32] as f32 / 16.0;
 
         map_info.temp_off = data[0x43C - InverterConstants::REGISTER_BASE_ADDRESS];
-        map_info.e_net = data[0x4F] as u32 * 65536
-            + data[0x4E] as u32 * 256
-            + data[0x4D] as u32;
-        map_info.e_acc = data[0x52] as u32 * 65536
-            + data[0x51] as u32 * 256
-            + data[0x50] as u32;
-        map_info.e_acc_charge = data[0x55] as u32 * 65536
-            + data[0x54] as u32 * 256
-            + data[0x53] as u32;
+        map_info.e_net = data[0x4F] as u32 * 65536 + data[0x4E] as u32 * 256 + data[0x4D] as u32;
+        map_info.e_acc = data[0x52] as u32 * 65536 + data[0x51] as u32 * 256 + data[0x50] as u32;
+        map_info.e_acc_charge =
+            data[0x55] as u32 * 65536 + data[0x54] as u32 * 256 + data[0x53] as u32;
         map_info.i2_c_err = data[0x45A - InverterConstants::REGISTER_BASE_ADDRESS];
         map_info.rs_err_dop = data[0x447 - InverterConstants::REGISTER_BASE_ADDRESS];
 
@@ -718,14 +719,8 @@ mod tests {
         ];
         for mode in others {
             for net_up_eco in [0, 1, 2, 3] {
-                assert_eq!(
-                    real_mode(mode, 2, 0, net_up_eco, 0, ABOVE_THRESHOLD),
-                    mode
-                );
-                assert_eq!(
-                    real_mode(mode, 3, 2, net_up_eco, 0, ABOVE_THRESHOLD),
-                    mode
-                );
+                assert_eq!(real_mode(mode, 2, 0, net_up_eco, 0, ABOVE_THRESHOLD), mode);
+                assert_eq!(real_mode(mode, 3, 2, net_up_eco, 0, ABOVE_THRESHOLD), mode);
             }
         }
     }

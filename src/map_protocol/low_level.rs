@@ -235,19 +235,16 @@ impl LowLevelProtocol {
         let mut idx: usize = 0;
 
         loop {
-            self.port
-                .write_all(&self.buffer[idx..=idx])?;
+            self.port.write_all(&self.buffer[idx..=idx])?;
 
             idx += 1;
-            self.port
-                .read_exact(&mut self.buffer[idx..=idx])?;
+            self.port.read_exact(&mut self.buffer[idx..=idx])?;
 
             if self.buffer[idx] == 0x0A || idx >= self.buffer.len() - 1 {
                 break;
             }
         }
-        self.port
-            .write_all(&self.buffer[idx..=idx])?;
+        self.port.write_all(&self.buffer[idx..=idx])?;
 
         if self.buffer[0] == 0x65 {
             return Err(MapError::FirstByteis65DontKnowWhatItMeans);
@@ -271,14 +268,10 @@ impl LowLevelProtocol {
         sum_r = sum_r.wrapping_add(1);
         // println!("sum_r3={}", sum_r);
         if sum_r == 0x0a && self.buffer[idx] != 0x0a {
-            return Err(MapError::ChecksumFailed {
-                value: sum_r,
-            });
+            return Err(MapError::ChecksumFailed { value: sum_r });
         }
         if sum_r != 0x0a && sum_r != self.buffer[idx - 1] {
-            return Err(MapError::ChecksumFailed {
-                value: sum_r,
-            });
+            return Err(MapError::ChecksumFailed { value: sum_r });
         }
         // Not payload: the checksum sits just before the terminator, and when the
         // checksum is itself `0x0a` it is the byte the read loop stopped on and no
